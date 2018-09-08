@@ -114,7 +114,7 @@ func bid2() (b []byte) {
 
 func main() {
 
-	imapDialer, err := NewIMAP("swickyeets@gmail.com", "armoire deniable alarm unmapped ferry", "imap.gmail.com", 993)
+	imapDialer, err := NewIMAP("swickyeets@gmail.com", "password", "imap.gmail.com", 993)
 	defer imapDialer.Close()
 	if err != nil {
 		log.Fatalln(err)
