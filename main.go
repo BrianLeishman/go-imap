@@ -1,32 +1,25 @@
-/*
- * File: c:\Users\Brian Leishman\go\src\github.com\BrianLeishman\imap\main.go
- * Project: c:\Users\Brian Leishman\go\src\github.com\BrianLeishman\imap
- * Created Date: Friday September 7th 2018
- * Author: Brian Leishman
- * -----
- * Last Modified: Sat Sep 08 2018
- * Modified By: Brian Leishman
- * -----
- * Copyright (c) 2018 Stumpyinc, LLC
- */
-
-package main
+package imap
 
 import (
 	"bufio"
-	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log"
-	"math/big"
 	"strconv"
 	"strings"
-	"time"
 )
+
+// AddSlashes adds slashes to double quotes
+var AddSlashes = strings.NewReplacer(`"`, `\"`)
+
+// RemoveSlashes removes slashes before double quotes
+var RemoveSlashes = strings.NewReplacer(`\"`, `"`)
 
 // Dialer is that
 type Dialer struct {
-	conn *tls.Conn
+	conn    *tls.Conn
+	Folder  string
+	Verbose bool
 }
 
 // NewIMAP makes a new imap
@@ -49,12 +42,14 @@ func (d *Dialer) Close() {
 }
 
 // Exec executes the command on the imap connection
-func (d *Dialer) Exec(command string) (response []byte, err error) {
+func (d *Dialer) Exec(command string, buildResponse bool, newlinesBetweenLines bool, processLine func(line []byte)) (response []byte, err error) {
 	tag := fmt.Sprintf("%X", bid2())
 
 	c := fmt.Sprintf("%s %s\r\n", tag, command)
 
-	log.Println("->", strings.TrimSpace(c))
+	if d.Verbose {
+		log.Println("->", strings.TrimSpace(c))
+	}
 
 	_, err = d.conn.Write([]byte(c))
 	if err != nil {
@@ -63,15 +58,16 @@ func (d *Dialer) Exec(command string) (response []byte, err error) {
 
 	r := bufio.NewReader(d.conn)
 
-	response = make([]byte, 0)
+	if buildResponse {
+		response = make([]byte, 0)
+	}
 	for {
 		var line []byte
 		line, _, err = r.ReadLine()
 		if err != nil {
 			return
 		}
-		response = append(response, line...)
-		response = append(response, '\n')
+
 		if string(line[:16]) == tag {
 			if string(line[17:19]) != "OK" {
 				err = fmt.Errorf("imap command failed: %s", line[20:])
@@ -80,46 +76,101 @@ func (d *Dialer) Exec(command string) (response []byte, err error) {
 
 			break
 		}
+
+		if processLine != nil {
+			processLine(line)
+		}
+		if buildResponse || d.Verbose {
+			response = append(response, line...)
+			if newlinesBetweenLines {
+				response = append(response, '\n')
+			}
+		}
 	}
 
-	log.Println("<-", strings.TrimSpace(string(response)))
+	if d.Verbose {
+		log.Println("<-", strings.TrimSpace(string(response)))
+	}
 
 	return
 }
 
 // Login attempts to login
 func (d *Dialer) Login(username string, password string) (err error) {
-	_, err = d.Exec(fmt.Sprintf("LOGIN \"%s\" \"%s\"", username, password))
+	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, false, nil)
 	return
 }
 
-// petite keys ( ͡° ͜ʖ ͡°)
-func bid2() (b []byte) {
-	t := time.Now().UnixNano()
-	b = make([]byte, 8)
-
-	nBig, _ := rand.Int(rand.Reader, big.NewInt(0xff))
-
-	b[0] = byte((t >> 070) & 0xff)
-	b[1] = byte((t >> 060) & 0xff)
-	b[2] = byte((t >> 050) & 0xff)
-	b[3] = byte((t >> 040) & 0xff)
-	b[4] = byte((t >> 030) & 0xff)
-	b[5] = byte((t >> 020) & 0xff)
-	b[6] = byte((t >> 010) & 0xff)
-	b[7] = byte(int(nBig.Int64() & 0xf0))
-
-	return
-}
-
-func main() {
-
-	imapDialer, err := NewIMAP("swickyeets@gmail.com", "password", "imap.gmail.com", 993)
-	defer imapDialer.Close()
+// GetFolders returns all folders
+func (d *Dialer) GetFolders() (folders []string, err error) {
+	folders = make([]string, 0)
+	nextLineIsFolder := false
+	_, err = d.Exec(`LIST "" "*"`, false, false, func(line []byte) {
+		if nextLineIsFolder {
+			folders = append(folders, string(line))
+			nextLineIsFolder = false
+		} else {
+			i := len(line) - 1
+			quoted := line[i] == '"'
+			if line[i] == '}' {
+				nextLineIsFolder = true
+				return
+			}
+			delim := byte(' ')
+			if quoted {
+				delim = '"'
+				i--
+			}
+			end := i
+			for i > 0 {
+				if line[i] == delim {
+					if !quoted || line[i-1] != '\\' {
+						break
+					}
+				}
+				i--
+			}
+			folders = append(folders, RemoveSlashes.Replace(string(line[i+1:end+1])))
+		}
+	})
 	if err != nil {
-		log.Fatalln(err)
-	} else {
-		imapDialer.Exec(`EXAMINE "INBOX"`)
+		return nil, err
 	}
 
+	return folders, nil
+}
+
+// SelectFolder selects a folder
+func (d *Dialer) SelectFolder(folder string) (err error) {
+	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, false, false, nil)
+	if err != nil {
+		return
+	}
+	d.Folder = folder
+	return nil
+}
+
+// GetUIDs returns the UIDs in the current folder that match the search
+func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
+	uids = make([]int, 0)
+	t := []byte{' ', '\r', '\n'}
+	r, err := d.Exec(`UID SEARCH ALL`, true, false, nil)
+	if err != nil {
+		return nil, err
+	}
+	if string(StrtokInit(r, t)) == "*" && string(Strtok(t)) == "SEARCH" {
+		for {
+			uid := string(Strtok(t))
+			if len(uid) == 0 {
+				break
+			}
+			u, err := strconv.Atoi(string(uid))
+			if err != nil {
+				return nil, err
+			}
+			uids = append(uids, u)
+		}
+	}
+
+	return uids, nil
 }
