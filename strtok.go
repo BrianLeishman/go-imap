@@ -34,3 +34,8 @@ func Strtok(delims []byte) []byte {
 
 	return strtokBytes[start:]
 }
+
+// GetStrtokI returns the current position of the tokenizer
+func GetStrtokI() int {
+	return strtokI
+}
