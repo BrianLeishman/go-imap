@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"mime"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/jhillyerd/enmime"
+	"golang.org/x/net/html/charset"
 )
 
 // AddSlashes adds slashes to double quotes
@@ -27,8 +29,8 @@ type Dialer struct {
 	Verbose bool
 }
 
-// NewIMAP makes a new imap
-func NewIMAP(username string, password string, host string, port int) (d *Dialer, err error) {
+// New makes a new imap
+func New(username string, password string, host string, port int) (d *Dialer, err error) {
 	var conn *tls.Conn
 	conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
 	if err != nil {
@@ -226,6 +228,9 @@ const (
 // If no UIDs are given, they everything in the current folder is selected
 func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	emails, uidsStr, err := d.GetOverviews(uids...)
+	if err != nil {
+		return nil, err
+	}
 
 	r, err := d.Exec("UID FETCH "+uidsStr+" BODY.PEEK[]", true, true, nil)
 	if err != nil {
@@ -323,7 +328,12 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 	uidsStr = _uids.String()
 
 	emails = make(map[int]*Email, len(uids))
-	dec := new(mime.WordDecoder)
+	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
+		label = strings.Replace(label, "windows-", "cp", -1)
+		encoding, _ := charset.Lookup(label)
+		return encoding.NewDecoder().Reader(input), nil
+	}
+	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
 	r, err := d.Exec("UID FETCH "+uidsStr+" ALL", true, true, nil)
 	if err != nil {
@@ -521,7 +531,7 @@ func ParseFetchResponse(r []byte) (records [][]*Token, err error) {
 		currentToken := TUnset
 		tokenStart := 0
 		tokenEnd := 0
-		escaped := false
+		// escaped := false
 		depth := 0
 		container := make([]tokenContainer, 4)
 		container[0] = &tokens
@@ -587,17 +597,14 @@ func ParseFetchResponse(r []byte) (records [][]*Token, err error) {
 
 			switch currentToken {
 			case TQuoted:
-				if !escaped {
-					switch b {
-					case '"':
-						tokenEnd = i - 1
-						pushToken()
-						goto Cont
-					case '\'':
-						escaped = true
-					}
-				} else {
-					escaped = false
+				switch b {
+				case '"':
+					tokenEnd = i - 1
+					pushToken()
+					goto Cont
+				case '\\':
+					i++
+					goto Cont
 				}
 			case TLiteral:
 				switch {
