@@ -2,6 +2,7 @@ package imap
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -24,9 +25,15 @@ var RemoveSlashes = strings.NewReplacer(`\"`, `"`)
 
 // Dialer is that
 type Dialer struct {
-	conn    *tls.Conn
-	Folder  string
-	Verbose bool
+	conn        *tls.Conn
+	Folder      string
+	Verbose     bool
+	Username    string
+	Password    string
+	Host        string
+	Port        int
+	strtokI     int
+	strtokBytes []byte
 }
 
 // New makes a new imap
@@ -36,7 +43,13 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	if err != nil {
 		return
 	}
-	d = &Dialer{conn: conn}
+	d = &Dialer{
+		conn:     conn,
+		Username: username,
+		Password: password,
+		Host:     host,
+		Port:     port,
+	}
 
 	err = d.Login(username, password)
 
@@ -67,8 +80,9 @@ func (d *Dialer) Exec(command string, buildResponse bool, newlinesBetweenLines b
 
 	r := bufio.NewReader(d.conn)
 
+	var buf *bytes.Buffer
 	if buildResponse {
-		response = make([]byte, 0)
+		buf = bytes.NewBuffer(nil)
 	}
 	for {
 		var line []byte
@@ -81,7 +95,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, newlinesBetweenLines b
 			log.Println("<-", string(line))
 		}
 
-		if string(line[:16]) == tag {
+		if len(line) >= 19 && string(line[:16]) == tag {
 			if string(line[17:19]) != "OK" {
 				err = fmt.Errorf("imap command failed: %s", line[20:])
 				return
@@ -95,13 +109,16 @@ func (d *Dialer) Exec(command string, buildResponse bool, newlinesBetweenLines b
 			}
 		}
 		if buildResponse {
-			response = append(response, line...)
+			buf.Write(line)
 			if newlinesBetweenLines {
-				response = append(response, nl...)
+				buf.WriteString(nl)
 			}
 		}
 	}
 
+	if buildResponse {
+		return buf.Bytes(), nil
+	}
 	return
 }
 
@@ -165,13 +182,13 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 	uids = make([]int, 0)
 	t := []byte{' ', '\r', '\n'}
-	r, err := d.Exec(`UID SEARCH ALL`, true, false, nil)
+	r, err := d.Exec(`UID SEARCH `+search, true, false, nil)
 	if err != nil {
 		return nil, err
 	}
-	if string(StrtokInit(r, t)) == "*" && string(Strtok(t)) == "SEARCH" {
+	if string(d.StrtokInit(r, t)) == "*" && string(d.Strtok(t)) == "SEARCH" {
 		for {
-			uid := string(Strtok(t))
+			uid := string(d.Strtok(t))
 			if len(uid) == 0 {
 				break
 			}
@@ -227,21 +244,34 @@ const (
 // GetEmails returns email with their bodies for the given UIDs in the current folder.
 // If no UIDs are given, they everything in the current folder is selected
 func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
-	emails, uidsStr, err := d.GetOverviews(uids...)
+	emails, err = d.GetOverviews(uids...)
 	if err != nil {
 		return nil, err
 	}
 
-	r, err := d.Exec("UID FETCH "+uidsStr+" BODY.PEEK[]", true, true, nil)
+	uidsStr := strings.Builder{}
+	if len(uids) == 0 {
+		uidsStr.WriteString("1:*")
+	} else {
+		for i, u := range uids {
+			if i != 0 {
+				uidsStr.WriteByte(',')
+			}
+			uidsStr.WriteString(strconv.Itoa(u))
+		}
+	}
+
+	r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, true, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	records, err := ParseFetchResponse(r)
+	records, err := d.ParseFetchResponse(r)
 	if err != nil {
 		return nil, err
 	}
 
+RecL:
 	for _, tks := range records {
 		e := &Email{}
 		skip := 0
@@ -261,9 +291,9 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 				msg := tks[i+1].Str
 				r := strings.NewReader(msg)
 
-				env, err := enmime.ReadEnvelope(r)
-				if err != nil {
-					return nil, err
+				env, _ := enmime.ReadEnvelope(r)
+				if env == nil {
+					continue RecL
 				}
 
 				e.Subject = env.GetHeader("Subject")
@@ -289,7 +319,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 
 				skip++
 			case "UID":
-				if CheckType(tks[i+1], []TType{TNumber}, "after UID") != nil {
+				if err = CheckType(tks[i+1], []TType{TNumber}, "after UID"); err != nil {
 					return nil, err
 				}
 				e.UID = tks[i+1].Num
@@ -312,20 +342,18 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 
 // GetOverviews returns emails without bodies for the given UIDs in the current folder.
 // If no UIDs are given, they everything in the current folder is selected
-func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr string, err error) {
-	_uids := strings.Builder{}
+func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
+	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
-		_uids.WriteString("1:*")
+		uidsStr.WriteString("1:*")
 	} else {
 		for i, u := range uids {
 			if i != 0 {
-				_uids.WriteByte(',')
+				uidsStr.WriteByte(',')
 			}
-			_uids.WriteString(strconv.Itoa(u))
+			uidsStr.WriteString(strconv.Itoa(u))
 		}
 	}
-
-	uidsStr = _uids.String()
 
 	emails = make(map[int]*Email, len(uids))
 	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
@@ -335,14 +363,14 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 	}
 	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
-	r, err := d.Exec("UID FETCH "+uidsStr+" ALL", true, true, nil)
+	r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, true, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	records, err := ParseFetchResponse(r)
+	records, err := d.ParseFetchResponse(r)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	for _, tokens := range records {
@@ -359,53 +387,53 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 				}
 				switch t.Str {
 				case "FLAGS":
-					if CheckType(tokens[i+1], []TType{TContainer}, "after FLAGS") != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1], []TType{TContainer}, "after FLAGS"); err != nil {
+						return nil, err
 					}
 					e.Flags = make([]string, len(tokens[i+1].Tokens))
 					for i, t := range tokens[i+1].Tokens {
-						if CheckType(t, []TType{TLiteral}, "for FLAGS[%d]", i) != nil {
-							return nil, "", err
+						if err = CheckType(t, []TType{TLiteral}, "for FLAGS[%d]", i); err != nil {
+							return nil, err
 						}
 						e.Flags[i] = t.Str
 					}
 					skip++
 				case "INTERNALDATE":
-					if CheckType(tokens[i+1], []TType{TQuoted}, "after INTERNALDATE") != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1], []TType{TQuoted}, "after INTERNALDATE"); err != nil {
+						return nil, err
 					}
 					e.Received, err = time.Parse(TimeFormat, tokens[i+1].Str)
 					if err != nil {
-						return nil, "", err
+						return nil, err
 					}
 					e.Received = e.Received.UTC()
 					skip++
 				case "RFC822.SIZE":
-					if CheckType(tokens[i+1], []TType{TNumber}, "after RFC822.SIZE") != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1], []TType{TNumber}, "after RFC822.SIZE"); err != nil {
+						return nil, err
 					}
 					e.Size = uint64(tokens[i+1].Num)
 					skip++
 				case "ENVELOPE":
-					if CheckType(tokens[i+1], []TType{TContainer}, "after ENVELOPE") != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1], []TType{TContainer}, "after ENVELOPE"); err != nil {
+						return nil, err
 					}
-					if CheckType(tokens[i+1].Tokens[EDate], []TType{TQuoted}, "for ENVELOPE[%d]", EDate) != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1].Tokens[EDate], []TType{TQuoted}, "for ENVELOPE[%d]", EDate); err != nil {
+						return nil, err
 					}
-					if CheckType(tokens[i+1].Tokens[ESubject], []TType{TQuoted}, "for ENVELOPE[%d]", ESubject) != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1].Tokens[ESubject], []TType{TQuoted}, "for ENVELOPE[%d]", ESubject); err != nil {
+						return nil, err
 					}
 
 					e.Sent, err = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", tokens[i+1].Tokens[EDate].Str)
 					if err != nil {
-						return nil, "", err
+						return nil, err
 					}
 					e.Sent = e.Sent.UTC()
 
 					e.Subject, err = dec.DecodeHeader(tokens[i+1].Tokens[ESubject].Str)
 					if err != nil {
-						return nil, "", err
+						return nil, err
 					}
 
 					for _, a := range []struct {
@@ -420,34 +448,34 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 						{&e.BCC, EBCC, "BCC"},
 					} {
 						if tokens[i+1].Tokens[EFrom].Type != TNil {
-							if CheckType(tokens[i+1].Tokens[a.pos], []TType{TNil, TContainer}, "for ENVELOPE[%d]", a.pos) != nil {
-								return nil, "", err
+							if err = CheckType(tokens[i+1].Tokens[a.pos], []TType{TNil, TContainer}, "for ENVELOPE[%d]", a.pos); err != nil {
+								return nil, err
 							}
 							*a.dest = make(map[string]string, len(tokens[i+1].Tokens[EFrom].Tokens))
 							for i, t := range tokens[i+1].Tokens[a.pos].Tokens {
-								if CheckType(t.Tokens[EEName], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEName) != nil {
-									return nil, "", err
+								if err = CheckType(t.Tokens[EEName], []TType{TQuoted, TNil}, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
+									return nil, err
 								}
-								if CheckType(t.Tokens[EEMailbox], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEMailbox) != nil {
-									return nil, "", err
+								if err = CheckType(t.Tokens[EEMailbox], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
+									return nil, err
 								}
-								if CheckType(t.Tokens[EEHost], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEHost) != nil {
-									return nil, "", err
+								if err = CheckType(t.Tokens[EEHost], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
+									return nil, err
 								}
 
 								name, err := dec.DecodeHeader(t.Tokens[EEName].Str)
 								if err != nil {
-									return nil, "", err
+									return nil, err
 								}
 
 								host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
 								if err != nil {
-									return nil, "", err
+									return nil, err
 								}
 
 								mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
 								if err != nil {
-									return nil, "", err
+									return nil, err
 								}
 
 								(*a.dest)[strings.ToLower(mailbox+"@"+host)] = name
@@ -459,8 +487,8 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 
 					skip++
 				case "UID":
-					if CheckType(tokens[i+1], []TType{TNumber}, "after UID") != nil {
-						return nil, "", err
+					if err = CheckType(tokens[i+1], []TType{TNumber}, "after UID"); err != nil {
+						return nil, err
 					}
 					e.UID = tokens[i+1].Num
 					skip++
@@ -510,23 +538,23 @@ const TimeFormat = "02-Jan-2006 15:04:05 -0700"
 type tokenContainer *[]*Token
 
 // ParseFetchResponse parses a response from a FETCH command into tokens
-func ParseFetchResponse(r []byte) (records [][]*Token, err error) {
+func (d *Dialer) ParseFetchResponse(r []byte) (records [][]*Token, err error) {
 	records = make([][]*Token, 0)
 	for {
 		t := []byte{' ', '\r', '\n'}
 		ok := false
-		if string(StrtokInit(r, t)) == "*" {
-			if _, err := strconv.Atoi(string(Strtok(t))); err == nil && string(Strtok(t)) == "FETCH" {
+		if string(d.StrtokInit(r, t)) == "*" {
+			if _, err := strconv.Atoi(string(d.Strtok(t))); err == nil && string(d.Strtok(t)) == "FETCH" {
 				ok = true
 			}
 		}
 
 		if !ok {
-			return nil, fmt.Errorf("Unable to parse Fetch line %#v", string(r[:GetStrtokI()]))
+			return nil, fmt.Errorf("Unable to parse Fetch line %#v", string(r[:d.GetStrtokI()]))
 		}
 
 		tokens := make([]*Token, 0)
-		r = r[GetStrtokI()+1:]
+		r = r[d.GetStrtokI()+1:]
 
 		currentToken := TUnset
 		tokenStart := 0
@@ -700,5 +728,5 @@ func CheckType(token *Token, acceptableTypes []TType, loc string, v ...interface
 		err = fmt.Errorf("Expected %s token %s, got %#v", 0, fmt.Sprintf(loc, v...), token)
 	}
 
-	return
+	return err
 }

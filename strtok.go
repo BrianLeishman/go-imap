@@ -7,35 +7,32 @@ import "bytes"
 // since Go can't return mixed types, and we want to keep the ability of using this function
 // in successes in conditions
 
-var strtokI int
-var strtokBytes []byte
-
 // StrtokInit starts the strtok sequence
-func StrtokInit(b []byte, delims []byte) []byte {
-	strtokI = 0
-	strtokBytes = b
-	return Strtok(delims)
+func (d *Dialer) StrtokInit(b []byte, delims []byte) []byte {
+	d.strtokI = 0
+	d.strtokBytes = b
+	return d.Strtok(delims)
 }
 
 // Strtok returns the next "token" in the sequence with the given delimeters
-func Strtok(delims []byte) []byte {
-	start := strtokI
-	for strtokI < len(strtokBytes) {
-		if bytes.Contains(delims, strtokBytes[strtokI:strtokI+1]) {
-			if start == strtokI {
+func (d *Dialer) Strtok(delims []byte) []byte {
+	start := d.strtokI
+	for d.strtokI < len(d.strtokBytes) {
+		if bytes.Contains(delims, d.strtokBytes[d.strtokI:d.strtokI+1]) {
+			if start == d.strtokI {
 				start++
 			} else {
-				strtokI++
-				return strtokBytes[start : strtokI-1]
+				d.strtokI++
+				return d.strtokBytes[start : d.strtokI-1]
 			}
 		}
-		strtokI++
+		d.strtokI++
 	}
 
-	return strtokBytes[start:]
+	return d.strtokBytes[start:]
 }
 
 // GetStrtokI returns the current position of the tokenizer
-func GetStrtokI() int {
-	return strtokI
+func (d *Dialer) GetStrtokI() int {
+	return d.strtokI
 }
