@@ -353,7 +353,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, uidsStr strin
 						return nil, "", err
 					}
 					e.Flags = make([]string, len(tokens[i+1].Tokens))
-					for i, t := range tokens[i].Tokens {
+					for i, t := range tokens[i+1].Tokens {
 						if CheckType(t, []TType{TLiteral}, "for FLAGS[%d]", i) != nil {
 							return nil, "", err
 						}
