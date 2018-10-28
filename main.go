@@ -6,14 +6,16 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
+	"github.com/StirlingMarketingGroup/go-retry"
 	"github.com/jhillyerd/enmime"
+	. "github.com/logrusorgru/aurora"
 	"golang.org/x/net/html/charset"
 )
 
@@ -23,101 +25,191 @@ var AddSlashes = strings.NewReplacer(`"`, `\"`)
 // RemoveSlashes removes slashes before double quotes
 var RemoveSlashes = strings.NewReplacer(`\"`, `"`)
 
-// Dialer is that
+// Verbose outputs every command and its response with the IMAP server
+var Verbose = false
+
+// SkipResponses skips printing server responses in verbose mode
+var SkipResponses = false
+
+// Dialer is basically an IMAP connection
 type Dialer struct {
-	conn        *tls.Conn
-	Folder      string
-	Verbose     bool
+	conn   *tls.Conn
+	Folder string
+	// Verbose     bool
 	Username    string
 	Password    string
 	Host        string
 	Port        int
 	strtokI     int
 	strtokBytes []byte
+	Connected   bool
+	ConnNum     int
+}
+
+var nextConnNum = 0
+var nextConnNumMutex = sync.RWMutex{}
+
+func log(connNum int, msg interface{}) {
+	fmt.Println(Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), Colorize(fmt.Sprintf("Conn%d", connNum), CyanFg|BoldFm), msg))
 }
 
 // New makes a new imap
 func New(username string, password string, host string, port int) (d *Dialer, err error) {
-	var conn *tls.Conn
-	conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
-	if err != nil {
-		return
-	}
-	d = &Dialer{
-		conn:     conn,
-		Username: username,
-		Password: password,
-		Host:     host,
-		Port:     port,
-	}
+	nextConnNumMutex.RLock()
+	connNum := nextConnNum
+	nextConnNumMutex.RUnlock()
 
-	err = d.Login(username, password)
+	nextConnNumMutex.Lock()
+	nextConnNum++
+	nextConnNumMutex.Unlock()
+
+	err = retry.Retry(func() error {
+		log(connNum, Green(Bold("establishing connection")))
+		var conn *tls.Conn
+		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		if err != nil {
+			return err
+		}
+		d = &Dialer{
+			conn:      conn,
+			Username:  username,
+			Password:  password,
+			Host:      host,
+			Port:      port,
+			Connected: true,
+			ConnNum:   connNum,
+		}
+
+		return d.Login(username, password)
+	}, 3, func() error {
+		if Verbose {
+			log(connNum, Brown(Bold("failed to establish connection, retrying shortly")))
+		}
+		return nil
+	}, func() error {
+		if Verbose {
+			log(connNum, Brown(Bold("retrying failed connection now")))
+		}
+		return nil
+	})
+	if err != nil {
+		if Verbose {
+			log(connNum, Red(Bold("failed to establish connection")))
+		}
+		return nil, err
+	}
 
 	return
 }
 
+// Clone returns a new connection with the same conneciton information
+// as the one this is being called on
+func (d *Dialer) Clone() (d2 *Dialer, err error) {
+	d2, err = New(d.Username, d.Password, d.Host, d.Port)
+	// d2.Verbose = d1.Verbose
+	if d.Folder != "" {
+		err = d2.SelectFolder(d.Folder)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return
+}
+
 // Close closes the imap connection
-func (d *Dialer) Close() {
-	d.conn.Close()
+func (d *Dialer) Close() (err error) {
+	if d.Connected {
+		log(d.ConnNum, Brown(Bold("closing connection")))
+		err = d.conn.Close()
+		if err != nil {
+			return err
+		}
+		d.Connected = false
+	}
+	return
+}
+
+// Reconnect closes the current connection (if any) and establishes a new one
+func (d *Dialer) Reconnect() (err error) {
+	d.Close()
+	log(d.ConnNum, Brown(Bold("reopening connection")))
+	d, err = d.Clone()
+	if err != nil {
+		return err
+	}
+	return
 }
 
 const nl = "\r\n"
 
 // Exec executes the command on the imap connection
 func (d *Dialer) Exec(command string, buildResponse bool, newlinesBetweenLines bool, processLine func(line []byte) error) (response []byte, err error) {
-	tag := fmt.Sprintf("%X", bid2())
-
-	c := fmt.Sprintf("%s %s\r\n", tag, command)
-
-	if d.Verbose {
-		log.Println("->", strings.TrimSpace(c))
-	}
-
-	_, err = d.conn.Write([]byte(c))
-	if err != nil {
-		return
-	}
-
-	r := bufio.NewReader(d.conn)
-
 	var buf *bytes.Buffer
-	if buildResponse {
-		buf = bytes.NewBuffer(nil)
-	}
-	for {
-		var line []byte
-		line, _, err = r.ReadLine()
+	err = retry.Retry(func() (err error) {
+		tag := fmt.Sprintf("%X", bid2())
+
+		c := fmt.Sprintf("%s %s\r\n", tag, command)
+
+		if Verbose {
+			log(d.ConnNum, strings.Replace(fmt.Sprintf("%s %s", Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`, -1))
+		}
+
+		_, err = d.conn.Write([]byte(c))
 		if err != nil {
 			return
 		}
 
-		if d.Verbose {
-			log.Println("<-", string(line))
-		}
+		r := bufio.NewReader(d.conn)
 
-		if len(line) >= 19 && string(line[:16]) == tag {
-			if string(line[17:19]) != "OK" {
-				err = fmt.Errorf("imap command failed: %s", line[20:])
+		if buildResponse {
+			buf = bytes.NewBuffer(nil)
+		}
+		for {
+			var line []byte
+			line, _, err = r.ReadLine()
+			if err != nil {
 				return
 			}
-			break
-		}
 
-		if processLine != nil {
-			if err = processLine(line); err != nil {
-				return nil, err
+			if Verbose && !SkipResponses {
+				log(d.ConnNum, fmt.Sprintf("<- %s", string(line)))
+			}
+
+			if len(line) >= 19 && string(line[:16]) == tag {
+				if string(line[17:19]) != "OK" {
+					err = fmt.Errorf("imap command failed: %s", line[20:])
+					return
+				}
+				break
+			}
+
+			if processLine != nil {
+				if err = processLine(line); err != nil {
+					return
+				}
+			}
+			if buildResponse {
+				buf.Write(line)
+				if newlinesBetweenLines {
+					buf.WriteString(nl)
+				}
 			}
 		}
-		if buildResponse {
-			buf.Write(line)
-			if newlinesBetweenLines {
-				buf.WriteString(nl)
-			}
-		}
+		return
+	}, 3, func() error {
+		return d.Close()
+	}, func() error {
+		return d.Reconnect()
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if buildResponse {
-		return buf.Bytes(), nil
+		if buf != nil {
+			return buf.Bytes(), nil
+		}
+		return []byte{}, nil
 	}
 	return
 }
@@ -203,7 +295,7 @@ func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 	return uids, nil
 }
 
-// Email is... an email
+// Email is an email message
 type Email struct {
 	Flags     []string
 	Received  time.Time
@@ -236,6 +328,7 @@ const (
 
 const (
 	EEName uint8 = iota
+	// EESR is unused and should be ignored
 	EESR
 	EEMailbox
 	EEHost
@@ -249,15 +342,21 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		return nil, err
 	}
 
+	if len(emails) == 0 {
+		return
+	}
+
 	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
 		uidsStr.WriteString("1:*")
 	} else {
-		for i, u := range uids {
+		i := 0
+		for u := range emails {
 			if i != 0 {
 				uidsStr.WriteByte(',')
 			}
 			uidsStr.WriteString(strconv.Itoa(u))
+			i++
 		}
 	}
 
@@ -271,10 +370,11 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		return nil, err
 	}
 
-RecL:
+	// RecL:
 	for _, tks := range records {
 		e := &Email{}
 		skip := 0
+		success := true
 		for i, t := range tks {
 			if skip > 0 {
 				skip--
@@ -293,7 +393,11 @@ RecL:
 
 				env, _ := enmime.ReadEnvelope(r)
 				if env == nil {
-					continue RecL
+					if Verbose {
+						log(d.ConnNum, Brown("email body could not be parsed, skipping"))
+					}
+					success = false
+					// continue RecL
 				}
 
 				e.Subject = env.GetHeader("Subject")
@@ -327,14 +431,18 @@ RecL:
 			}
 		}
 
-		emails[e.UID].Subject = e.Subject
-		emails[e.UID].From = e.From
-		emails[e.UID].ReplyTo = e.ReplyTo
-		emails[e.UID].To = e.To
-		emails[e.UID].CC = e.CC
-		emails[e.UID].BCC = e.BCC
-		emails[e.UID].Text = e.Text
-		emails[e.UID].HTML = e.HTML
+		if success {
+			emails[e.UID].Subject = e.Subject
+			emails[e.UID].From = e.From
+			emails[e.UID].ReplyTo = e.ReplyTo
+			emails[e.UID].To = e.To
+			emails[e.UID].CC = e.CC
+			emails[e.UID].BCC = e.BCC
+			emails[e.UID].Text = e.Text
+			emails[e.UID].HTML = e.HTML
+		} else {
+			delete(emails, e.UID)
+		}
 	}
 
 	return
@@ -355,6 +463,27 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		}
 	}
 
+	var records [][]*Token
+	err = retry.Retry(func() (err error) {
+		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, true, nil)
+		if err != nil {
+			return
+		}
+
+		records, err = d.ParseFetchResponse(r)
+		if err != nil {
+			return
+		}
+		return
+	}, 3, func() error {
+		return d.Close()
+	}, func() error {
+		return d.Reconnect()
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	emails = make(map[int]*Email, len(uids))
 	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
 		label = strings.Replace(label, "windows-", "cp", -1)
@@ -363,16 +492,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	}
 	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
-	r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, true, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	records, err := d.ParseFetchResponse(r)
-	if err != nil {
-		return nil, err
-	}
-
+RecordsL:
 	for _, tokens := range records {
 		e := &Email{}
 		skip := 0
@@ -382,8 +502,8 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 				continue
 			}
 			if t.Depth == 0 {
-				if t.Type != TLiteral {
-					log.Fatalf("Expected literal token, got %#v\n", t)
+				if err = CheckType(t, []TType{TLiteral}, "in root"); err != nil {
+					return nil, err
 				}
 				switch t.Str {
 				case "FLAGS":
@@ -418,17 +538,14 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 					if err = CheckType(tokens[i+1], []TType{TContainer}, "after ENVELOPE"); err != nil {
 						return nil, err
 					}
-					if err = CheckType(tokens[i+1].Tokens[EDate], []TType{TQuoted}, "for ENVELOPE[%d]", EDate); err != nil {
+					if err = CheckType(tokens[i+1].Tokens[EDate], []TType{TQuoted, TNil}, "for ENVELOPE[%d]", EDate); err != nil {
 						return nil, err
 					}
 					if err = CheckType(tokens[i+1].Tokens[ESubject], []TType{TQuoted}, "for ENVELOPE[%d]", ESubject); err != nil {
 						return nil, err
 					}
 
-					e.Sent, err = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", tokens[i+1].Tokens[EDate].Str)
-					if err != nil {
-						return nil, err
-					}
+					e.Sent, _ = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", tokens[i+1].Tokens[EDate].Str)
 					e.Sent = e.Sent.UTC()
 
 					e.Subject, err = dec.DecodeHeader(tokens[i+1].Tokens[ESubject].Str)
@@ -456,7 +573,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 								if err = CheckType(t.Tokens[EEName], []TType{TQuoted, TNil}, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
 									return nil, err
 								}
-								if err = CheckType(t.Tokens[EEMailbox], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
+								if err = CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TNil}, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
 									return nil, err
 								}
 								if err = CheckType(t.Tokens[EEHost], []TType{TQuoted}, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
@@ -468,12 +585,18 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 									return nil, err
 								}
 
-								host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
+								if t.Tokens[EEMailbox].Type == TNil {
+									if Verbose {
+										log(d.ConnNum, Brown("email address has no mailbox name (probably not a real email), skipping"))
+									}
+									continue RecordsL
+								}
+								mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
 								if err != nil {
 									return nil, err
 								}
 
-								mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
+								host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
 								if err != nil {
 									return nil, err
 								}
@@ -714,6 +837,43 @@ func IsLiteral(b byte) bool {
 	return false
 }
 
+func GetTokenName(tokenType TType) string {
+	switch tokenType {
+	case TUnset:
+		return "TUnset"
+	case TAtom:
+		return "TAtom"
+	case TNumber:
+		return "TNumber"
+	case TLiteral:
+		return "TLiteral"
+	case TQuoted:
+		return "TQuoted"
+	case TNil:
+		return "TNil"
+	case TContainer:
+		return "TContainer"
+	}
+	return ""
+}
+
+func (t Token) String() string {
+	tokenType := GetTokenName(t.Type)
+	switch t.Type {
+	case TUnset, TNil:
+		return tokenType
+	case TAtom, TQuoted:
+		return fmt.Sprintf("(%s %#v)", tokenType, t.Str)
+	case TNumber:
+		return fmt.Sprintf("(%s %d)", tokenType, t.Num)
+	case TLiteral:
+		return fmt.Sprintf("(%s %s)", tokenType, t.Str)
+	case TContainer:
+		return fmt.Sprintf("(%s children: %s)", tokenType, t.Tokens)
+	}
+	return ""
+}
+
 // CheckType validates a type against a list of acceptable types,
 // if the type of the token isn't in the list, an error is returned
 func CheckType(token *Token, acceptableTypes []TType, loc string, v ...interface{}) (err error) {
@@ -725,7 +885,14 @@ func CheckType(token *Token, acceptableTypes []TType, loc string, v ...interface
 		}
 	}
 	if !ok {
-		err = fmt.Errorf("Expected %s token %s, got %#v", 0, fmt.Sprintf(loc, v...), token)
+		types := ""
+		for i, a := range acceptableTypes {
+			if i != i {
+				types += "|"
+			}
+			types += GetTokenName(a)
+		}
+		err = fmt.Errorf("expected %s token %s, got %+v", types, fmt.Sprintf(loc, v...), token)
 	}
 
 	return err
