@@ -50,7 +50,7 @@ var nextConnNum = 0
 var nextConnNumMutex = sync.RWMutex{}
 
 func log(connNum int, msg interface{}) {
-	fmt.Println(Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), Colorize(fmt.Sprintf("Conn%d", connNum), CyanFg|BoldFm), msg))
+	fmt.Println(Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), Colorize(fmt.Sprintf("IMAPConn%d", connNum), CyanFg|BoldFm), msg))
 }
 
 // New makes a new imap
@@ -64,7 +64,9 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	nextConnNumMutex.Unlock()
 
 	err = retry.Retry(func() error {
-		log(connNum, Green(Bold("establishing connection")))
+		if Verbose {
+			log(connNum, Green(Bold("establishing connection")))
+		}
 		var conn *tls.Conn
 		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
 		if err != nil {
@@ -119,7 +121,9 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 // Close closes the imap connection
 func (d *Dialer) Close() (err error) {
 	if d.Connected {
-		log(d.ConnNum, Brown(Bold("closing connection")))
+		if Verbose {
+			log(d.ConnNum, Brown(Bold("closing connection")))
+		}
 		err = d.conn.Close()
 		if err != nil {
 			return err
@@ -132,7 +136,9 @@ func (d *Dialer) Close() (err error) {
 // Reconnect closes the current connection (if any) and establishes a new one
 func (d *Dialer) Reconnect() (err error) {
 	d.Close()
-	log(d.ConnNum, Brown(Bold("reopening connection")))
+	if Verbose {
+		log(d.ConnNum, Brown(Bold("reopening connection")))
+	}
 	d, err = d.Clone()
 	if err != nil {
 		return err
