@@ -387,15 +387,25 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		}
 	}
 
-	r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, nil)
-	if err != nil {
-		return nil, err
-	}
+	var records [][]*Token
+	err = retry.Retry(func() (err error) {
+		r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, nil)
+		if err != nil {
+			return
+		}
 
-	records, err := d.ParseFetchResponse(r)
-	if err != nil {
-		return nil, err
-	}
+		records, err = d.ParseFetchResponse(r)
+		if err != nil {
+			return
+		}
+		return
+	}, RetryCount, func(err error) error {
+		log(d.ConnNum, d.Folder, Red(Bold(err)))
+		d.Close()
+		return nil
+	}, func() error {
+		return d.Reconnect()
+	})
 
 	// RecL:
 	for _, tks := range records {
