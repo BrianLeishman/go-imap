@@ -95,7 +95,7 @@ func main() {
 		// 	BCC       EmailAddresses
 		// 	Text      string
 		// 	HTML      string
-		//  Attachments []Attachment
+		//	Attachments []Attachment
 		// }
 		// Where the address type fields are maps like [EmailAddress:Name EmailAddress2:Name2]
 		// and an Attachment is a struct containing the Name and the Content (both as strings)
