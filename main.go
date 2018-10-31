@@ -144,7 +144,7 @@ func (e Email) String() string {
 }
 
 func (a Attachment) String() string {
-	return fmt.Sprintf("%s (%s)", a.Name, humanize.Bytes(uint64(len(a.Content))))
+	return fmt.Sprintf("%s (%s %s)", a.Name, a.MimeType, humanize.Bytes(uint64(len(a.Content))))
 }
 
 var nextConnNum = 0
