@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/StirlingMarketingGroup/go-retry"
+	"github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime"
 	. "github.com/logrusorgru/aurora"
 	"golang.org/x/net/html/charset"
@@ -46,6 +47,103 @@ type Dialer struct {
 	Connected       bool
 	disableEndCheck bool
 	ConnNum         int
+}
+
+// EmailAddresses are a map of email address to names
+type EmailAddresses map[string]string
+
+// Email is an email message
+type Email struct {
+	Flags       []string
+	Received    time.Time
+	Sent        time.Time
+	Size        uint64
+	Subject     string
+	UID         int
+	MessageID   string
+	From        EmailAddresses
+	To          EmailAddresses
+	ReplyTo     EmailAddresses
+	CC          EmailAddresses
+	BCC         EmailAddresses
+	Text        string
+	HTML        string
+	Attachments []Attachment
+}
+
+func (e EmailAddresses) String() string {
+	emails := strings.Builder{}
+	i := 0
+	for e, n := range e {
+		if i != 0 {
+			emails.WriteString(", ")
+		}
+		if len(n) != 0 {
+			if strings.ContainsRune(n, ',') {
+				emails.WriteString(fmt.Sprintf(`"%s" <%s>`, AddSlashes.Replace(n), e))
+			} else {
+				emails.WriteString(fmt.Sprintf(`%s <%s>`, n, e))
+			}
+		} else {
+			emails.WriteString(fmt.Sprintf("%s", e))
+		}
+		i++
+	}
+	return emails.String()
+}
+
+func (e Email) String() string {
+	email := strings.Builder{}
+
+	email.WriteString(fmt.Sprintf("Subject: %s\n", e.Subject))
+
+	if len(e.To) != 0 {
+		email.WriteString(fmt.Sprintf("To: %s\n", e.To))
+	}
+	if len(e.From) != 0 {
+		email.WriteString(fmt.Sprintf("From: %s\n", e.From))
+	}
+	if len(e.CC) != 0 {
+		email.WriteString(fmt.Sprintf("CC: %s\n", e.CC))
+	}
+	if len(e.BCC) != 0 {
+		email.WriteString(fmt.Sprintf("BCC: %s\n", e.BCC))
+	}
+	if len(e.ReplyTo) != 0 {
+		email.WriteString(fmt.Sprintf("ReplyTo: %s\n", e.ReplyTo))
+	}
+	if len(e.Text) != 0 {
+		if len(e.Text) > 20 {
+			email.WriteString(fmt.Sprintf("Text: %s...", e.Text[:20]))
+		} else {
+			email.WriteString(fmt.Sprintf("Text: %s", e.Text))
+		}
+		email.WriteString(fmt.Sprintf("(%s)\n", humanize.Bytes(uint64(len(e.Text)))))
+	}
+	if len(e.HTML) != 0 {
+		if len(e.HTML) > 20 {
+			email.WriteString(fmt.Sprintf("HTML: %s...", e.HTML[:20]))
+		} else {
+			email.WriteString(fmt.Sprintf("HTML: %s", e.HTML))
+		}
+		email.WriteString(fmt.Sprintf(" (%s)\n", humanize.Bytes(uint64(len(e.HTML)))))
+	}
+
+	if len(e.Attachments) != 0 {
+		email.WriteString(fmt.Sprintf("%d Attachment(s): %s\n", len(e.Attachments), e.Attachments))
+	}
+
+	return email.String()
+}
+
+func (a Attachment) String() string {
+	return fmt.Sprintf("%s (%s)", a.Name, humanize.Bytes(uint64(len(a.Content))))
+}
+
+// Attachment is an Email attachment
+type Attachment struct {
+	Name    string
+	Content []byte
 }
 
 var nextConnNum = 0
@@ -221,14 +319,18 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 		}
 		return
 	}, RetryCount, func(err error) error {
-		log(d.ConnNum, d.Folder, Red(Bold(err)))
+		if Verbose {
+			log(d.ConnNum, d.Folder, Red(err))
+		}
 		d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
 	})
 	if err != nil {
-		log(d.ConnNum, d.Folder, Red(Bold("All retries failed")))
+		if Verbose {
+			log(d.ConnNum, d.Folder, Red(Bold("All retries failed")))
+		}
 		return "", err
 	}
 
@@ -320,24 +422,6 @@ func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 	}
 
 	return uids, nil
-}
-
-// Email is an email message
-type Email struct {
-	Flags     []string
-	Received  time.Time
-	Sent      time.Time
-	Size      uint64
-	Subject   string
-	UID       int
-	MessageID string
-	From      map[string]string
-	To        map[string]string
-	ReplyTo   map[string]string
-	CC        map[string]string
-	BCC       map[string]string
-	Text      string
-	HTML      string
 }
 
 const (
@@ -441,8 +525,17 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 					e.Text = env.Text
 					e.HTML = env.HTML
 
+					if len(env.Attachments) != 0 {
+						for _, a := range env.Attachments {
+							e.Attachments = append(e.Attachments, Attachment{
+								Name:    a.FileName,
+								Content: a.Content,
+							})
+						}
+					}
+
 					for _, a := range []struct {
-						dest   *map[string]string
+						dest   *EmailAddresses
 						header string
 					}{
 						{&e.From, "From"},
@@ -477,6 +570,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 			emails[e.UID].BCC = e.BCC
 			emails[e.UID].Text = e.Text
 			emails[e.UID].HTML = e.HTML
+			emails[e.UID].Attachments = e.Attachments
 		} else {
 			delete(emails, e.UID)
 		}
@@ -504,6 +598,10 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	err = retry.Retry(func() (err error) {
 		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, nil)
 		if err != nil {
+			return
+		}
+
+		if len(r) == 0 {
 			return
 		}
 
@@ -592,7 +690,7 @@ RecordsL:
 				}
 
 				for _, a := range []struct {
-					dest  *map[string]string
+					dest  *EmailAddresses
 					pos   uint8
 					debug string
 				}{
