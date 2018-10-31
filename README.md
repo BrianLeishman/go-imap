@@ -98,7 +98,7 @@ func main() {
 		//	Attachments []Attachment
 		// }
 		// Where the address type fields are maps like [EmailAddress:Name EmailAddress2:Name2]
-		// and an Attachment is a struct containing the Name and the Content (both as strings)
+		// and an Attachment is a struct containing the Name, Content, and the MimeType (both as strings)
 		emails, err := im.GetEmails(uids...)
 		check(err)
 

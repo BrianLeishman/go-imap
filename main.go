@@ -71,6 +71,13 @@ type Email struct {
 	Attachments []Attachment
 }
 
+// Attachment is an Email attachment
+type Attachment struct {
+	Name     string
+	MimeType string
+	Content  []byte
+}
+
 func (e EmailAddresses) String() string {
 	emails := strings.Builder{}
 	i := 0
@@ -138,12 +145,6 @@ func (e Email) String() string {
 
 func (a Attachment) String() string {
 	return fmt.Sprintf("%s (%s)", a.Name, humanize.Bytes(uint64(len(a.Content))))
-}
-
-// Attachment is an Email attachment
-type Attachment struct {
-	Name    string
-	Content []byte
 }
 
 var nextConnNum = 0
@@ -528,8 +529,9 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 					if len(env.Attachments) != 0 {
 						for _, a := range env.Attachments {
 							e.Attachments = append(e.Attachments, Attachment{
-								Name:    a.FileName,
-								Content: a.Content,
+								Name:     a.FileName,
+								MimeType: a.ContentType,
+								Content:  a.Content,
 							})
 						}
 					}
