@@ -88,22 +88,30 @@ func main() {
 		// 	Subject   string
 		// 	UID       int
 		// 	MessageID string
-		// 	From      map[string]string
-		// 	To        map[string]string
-		// 	ReplyTo   map[string]string
-		// 	CC        map[string]string
-		// 	BCC       map[string]string
+		// 	From      EmailAddresses
+		// 	To        EmailAddresses
+		// 	ReplyTo   EmailAddresses
+		// 	CC        EmailAddresses
+		// 	BCC       EmailAddresses
 		// 	Text      string
 		// 	HTML      string
+		//  Attachments []Attachment
 		// }
-		// Where the address type fields are maps like [EmailAddress: Name, EmailAddress2: Name2]
+		// Where the address type fields are maps like [EmailAddress:Name EmailAddress2:Name2]
+		// and an Attachment is a struct containing the Name and the Content (both as strings)
 		emails, err := im.GetEmails(uids...)
 		check(err)
 
 		if len(emails) != 0 {
-			// Should print the subject with one of the emails in the selected folders!
+			// Should print a summary of one of the the emails
 			// (yes, I said "one of", don't expect the emails to be returned in any particular order)
-			fmt.Printf("Subject: %s", emails[0].Subject)
+			fmt.Print(emails[0])
+			// Subject: FW: FW:  FW:  New Order
+			// To: Brian Leishman <brian@stumpyinc.com>
+			// From: Customer Service <sales@totallylegitdomain.com>
+			// Text: Hello, World!...(4.3 kB)
+			// HTML: <html xmlns:v="urn:s... (35 kB)
+			// 1 Attachment(s): [20180330174029.jpg (192 kB)]
 		}
 
 	}
