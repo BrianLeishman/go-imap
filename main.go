@@ -2,10 +2,12 @@ package imap
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"mime"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,19 +36,20 @@ var SkipResponses = false
 // RetryCount is the number of times retired functions get retried
 var RetryCount = 10
 
+var lastResp string
+
 // Dialer is basically an IMAP connection
 type Dialer struct {
-	conn            *tls.Conn
-	Folder          string
-	Username        string
-	Password        string
-	Host            string
-	Port            int
-	strtokI         int
-	strtok          string
-	Connected       bool
-	disableEndCheck bool
-	ConnNum         int
+	conn      *tls.Conn
+	Folder    string
+	Username  string
+	Password  string
+	Host      string
+	Port      int
+	strtokI   int
+	strtok    string
+	Connected bool
+	ConnNum   int
 }
 
 // EmailAddresses are a map of email address to names
@@ -262,11 +265,24 @@ func (d *Dialer) Reconnect() (err error) {
 
 const nl = "\r\n"
 
+func dropNl(b []byte) []byte {
+	if len(b) >= 1 && b[len(b)-1] == '\n' {
+		if len(b) >= 2 && b[len(b)-2] == '\r' {
+			return b[:len(b)-2]
+		} else {
+			return b[:len(b)-1]
+		}
+	}
+	return b
+}
+
+var atom = regexp.MustCompile(`{\d+}$`)
+
 // Exec executes the command on the imap connection
-func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line string) error) (response string, err error) {
+func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
-		tag := fmt.Sprintf("%X", bid2())
+		tag := []byte(fmt.Sprintf("%X", bid2()))
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
@@ -279,30 +295,51 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 			return
 		}
 
-		r := bufio.NewScanner(d.conn)
-
-		const maxCapacity = 1024 * 1024
-		buf := make([]byte, maxCapacity)
-		r.Buffer(buf, maxCapacity)
+		r := bufio.NewReader(d.conn)
 
 		if buildResponse {
 			resp = strings.Builder{}
 		}
-		for r.Scan() {
-			line := r.Text()
-
-			if Verbose && !SkipResponses {
-				log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", line))
-			}
-
-			if !d.disableEndCheck {
-				if len(line) >= 19 && line[:16] == tag {
-					if line[17:19] != "OK" {
-						err = fmt.Errorf("imap command failed: %s", line[20:])
+		var line []byte
+		for err == nil {
+			line, err = r.ReadBytes('\n')
+			for {
+				if a := atom.Find(dropNl(line)); a != nil {
+					// fmt.Printf("%s\n", a)
+					var n int
+					n, err = strconv.Atoi(string(a[1 : len(a)-1]))
+					if err != nil {
 						return
 					}
-					break
+
+					buf := make([]byte, n)
+					_, err = io.ReadFull(r, buf)
+					if err != nil {
+						return
+					}
+					line = append(line, buf...)
+
+					buf, err = r.ReadBytes('\n')
+					if err != nil {
+						return
+					}
+					line = append(line, buf...)
+
+					continue
 				}
+				break
+			}
+
+			if Verbose && !SkipResponses {
+				log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
+			}
+
+			if len(line) >= 19 && bytes.Equal(line[:16], tag) {
+				if !bytes.Equal(line[17:19], []byte("OK")) {
+					err = fmt.Errorf("imap command failed: %s", line[20:])
+					return
+				}
+				break
 			}
 
 			if processLine != nil {
@@ -311,12 +348,8 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 				}
 			}
 			if buildResponse {
-				resp.WriteString(line)
-				resp.WriteString(nl)
+				resp.Write(line)
 			}
-		}
-		if err = r.Err(); err != nil {
-			return
 		}
 		return
 	}, RetryCount, func(err error) error {
@@ -337,7 +370,8 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 
 	if buildResponse {
 		if resp.Len() != 0 {
-			return resp.String(), nil
+			lastResp = resp.String()
+			return lastResp, nil
 		}
 		return "", nil
 	}
@@ -353,18 +387,13 @@ func (d *Dialer) Login(username string, password string) (err error) {
 // GetFolders returns all folders
 func (d *Dialer) GetFolders() (folders []string, err error) {
 	folders = make([]string, 0)
-	nextLineIsFolder := false
-	_, err = d.Exec(`LIST "" "*"`, false, func(line string) error {
-		if nextLineIsFolder {
-			folders = append(folders, string(line))
-			nextLineIsFolder = false
+	_, err = d.Exec(`LIST "" "*"`, false, func(line []byte) (err error) {
+		line = dropNl(line)
+		if b := bytes.IndexByte(line, '\n'); b != -1 {
+			folders = append(folders, string(line[b+1:]))
 		} else {
 			i := len(line) - 1
 			quoted := line[i] == '"'
-			if line[i] == '}' {
-				nextLineIsFolder = true
-				return nil
-			}
 			delim := byte(' ')
 			if quoted {
 				delim = '"'
@@ -381,7 +410,7 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 			}
 			folders = append(folders, RemoveSlashes.Replace(string(line[i+1:end+1])))
 		}
-		return nil
+		return
 	})
 	if err != nil {
 		return nil, err
@@ -390,9 +419,87 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 	return folders, nil
 }
 
+var regexExists = regexp.MustCompile(`\*\s+(\d+)\s+EXISTS`)
+
+// GetTotalEmailCount returns the total number of emails in every folder
+func (d *Dialer) GetTotalEmailCount() (count int, err error) {
+	return d.GetTotalEmailCountStartingFromExcluding("", nil)
+}
+
+// GetTotalEmailCountExcluding returns the total number of emails in every folder
+// excluding the specified folders
+func (d *Dialer) GetTotalEmailCountExcluding(excludedFolders []string) (count int, err error) {
+	return d.GetTotalEmailCountStartingFromExcluding("", excludedFolders)
+}
+
+// GetTotalEmailCountStartingFrom returns the total number of emails in every folder
+// after the specified start folder
+func (d *Dialer) GetTotalEmailCountStartingFrom(startFolder string) (count int, err error) {
+	return d.GetTotalEmailCountStartingFromExcluding(startFolder, nil)
+}
+
+// GetTotalEmailCountStartingFromExcluding returns the total number of emails in every folder
+// after the specified start folder, excluding the specified folders
+func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, excludedFolders []string) (count int, err error) {
+	started := true
+	if len(startFolder) != 0 {
+		started = false
+	}
+
+	folder := d.Folder
+
+	folders, err := d.GetFolders()
+	if err != nil {
+		return
+	}
+
+	for _, f := range folders {
+		if !started {
+			if f == startFolder {
+				started = true
+			} else {
+				continue
+			}
+		}
+
+		skip := false
+		for _, ef := range excludedFolders {
+			if strings.HasPrefix(f, ef) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		err = d.SelectFolder(f)
+		if err != nil {
+			return
+		}
+
+		var n int
+		n, err = strconv.Atoi(regexExists.FindStringSubmatch(lastResp)[1])
+		if err != nil {
+			return
+		}
+
+		count += n
+	}
+
+	if len(folder) != 0 {
+		err = d.SelectFolder(folder)
+		if err != nil {
+			return
+		}
+	}
+
+	return
+}
+
 // SelectFolder selects a folder
 func (d *Dialer) SelectFolder(folder string) (err error) {
-	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, false, nil)
+	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, nil)
 	if err != nil {
 		return
 	}
