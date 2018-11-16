@@ -648,6 +648,16 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 						}
 					}
 
+					if len(env.Inlines) != 0 {
+						for _, a := range env.Inlines {
+							e.Attachments = append(e.Attachments, Attachment{
+								Name:     a.FileName,
+								MimeType: a.ContentType,
+								Content:  a.Content,
+							})
+						}
+					}
+
 					for _, a := range []struct {
 						dest   *EmailAddresses
 						header string
