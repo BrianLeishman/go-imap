@@ -279,7 +279,7 @@ func dropNl(b []byte) []byte {
 var atom = regexp.MustCompile(`{\d+}$`)
 
 // Exec executes the command on the imap connection
-func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line []byte) error) (response string, err error) {
+func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
 		tag := []byte(fmt.Sprintf("%X", bid2()))
@@ -352,7 +352,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 			}
 		}
 		return
-	}, RetryCount, func(err error) error {
+	}, retryCount, func(err error) error {
 		if Verbose {
 			log(d.ConnNum, d.Folder, Red(err))
 		}
@@ -380,14 +380,14 @@ func (d *Dialer) Exec(command string, buildResponse bool, processLine func(line 
 
 // Login attempts to login
 func (d *Dialer) Login(username string, password string) (err error) {
-	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, nil)
+	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, RetryCount, nil)
 	return
 }
 
 // GetFolders returns all folders
 func (d *Dialer) GetFolders() (folders []string, err error) {
 	folders = make([]string, 0)
-	_, err = d.Exec(`LIST "" "*"`, false, func(line []byte) (err error) {
+	_, err = d.Exec(`LIST "" "*"`, false, RetryCount, func(line []byte) (err error) {
 		line = dropNl(line)
 		if b := bytes.IndexByte(line, '\n'); b != -1 {
 			folders = append(folders, string(line[b+1:]))
@@ -499,7 +499,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 
 // SelectFolder selects a folder
 func (d *Dialer) SelectFolder(folder string) (err error) {
-	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, nil)
+	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return
 	}
@@ -511,7 +511,7 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 	uids = make([]int, 0)
 	t := []byte{' ', '\r', '\n'}
-	r, err := d.Exec(`UID SEARCH `+search, true, nil)
+	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -571,6 +571,10 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	} else {
 		i := 0
 		for u := range emails {
+			if u == 0 {
+				continue
+			}
+
 			if i != 0 {
 				uidsStr.WriteByte(',')
 			}
@@ -581,7 +585,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
-		r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, nil)
+		r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, 0, nil)
 		if err != nil {
 			return
 		}
@@ -620,12 +624,13 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 				msg := tks[i+1].Str
 				r := strings.NewReader(msg)
 
-				env, _ := enmime.ReadEnvelope(r)
-				if env == nil {
+				env, err := enmime.ReadEnvelope(r)
+				if err != nil {
 					if Verbose {
-						log(d.ConnNum, d.Folder, Brown("email body could not be parsed, skipping"))
+						log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
 					}
 					success = false
+
 					// continue RecL
 				} else {
 
@@ -696,6 +701,10 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		uidsStr.WriteString("1:*")
 	} else {
 		for i, u := range uids {
+			if u == 0 {
+				continue
+			}
+
 			if i != 0 {
 				uidsStr.WriteByte(',')
 			}
@@ -705,7 +714,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
-		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, nil)
+		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, 0, nil)
 		if err != nil {
 			return
 		}
@@ -738,7 +747,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	}
 	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
-RecordsL:
+	// RecordsL:
 	for _, tks := range records {
 		e := &Email{}
 		skip := 0
@@ -830,12 +839,12 @@ RecordsL:
 								return nil, err
 							}
 
-							if t.Tokens[EEMailbox].Type == TNil {
-								if Verbose {
-									log(d.ConnNum, d.Folder, Brown("email address has no mailbox name (probably not a real email), skipping"))
-								}
-								continue RecordsL
-							}
+							// if t.Tokens[EEMailbox].Type == TNil {
+							// 	if Verbose {
+							// 		log(d.ConnNum, d.Folder, Brown("email address has no mailbox name (probably not a real email), skipping"))
+							// 	}
+							// 	continue RecordsL
+							// }
 							mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
 							if err != nil {
 								return nil, err
