@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,8 +15,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/StirlingMarketingGroup/go-retry"
-	"github.com/dustin/go-humanize"
+	retry "github.com/StirlingMarketingGroup/go-retry"
+	"github.com/davecgh/go-spew/spew"
+	humanize "github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime"
 	. "github.com/logrusorgru/aurora"
 	"golang.org/x/net/html/charset"
@@ -334,6 +336,12 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 				log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
 			}
 
+			// if strings.Contains(string(line), "--00000000000030095105741e7f1f") {
+			// 	f, _ := ioutil.TempFile("", "")
+			// 	ioutil.WriteFile(f.Name(), line, 0777)
+			// 	fmt.Println(f.Name())
+			// }
+
 			if len(line) >= 19 && bytes.Equal(line[:16], tag) {
 				if !bytes.Equal(line[17:19], []byte("OK")) {
 					err = fmt.Errorf("imap command failed: %s", line[20:])
@@ -628,6 +636,9 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 				if err != nil {
 					if Verbose {
 						log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
+						spew.Dump(env)
+						spew.Dump(msg)
+						os.Exit(0)
 					}
 					success = false
 
@@ -840,7 +851,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
 								return nil, err
 							}
-							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
+							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
 								return nil, err
 							}
 
@@ -1029,7 +1040,7 @@ func (d *Dialer) ParseFetchResponse(r string) (records [][]*Token, err error) {
 						return nil, err
 					}
 					tokenStart = tokenEnd + 2 + len(nl)
-					tokenEnd = tokenStart + size - len(nl) - 1
+					tokenEnd = tokenStart + size - 1
 					i += size
 					pushToken()
 				}
