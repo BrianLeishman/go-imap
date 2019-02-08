@@ -222,7 +222,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	return
 }
 
-// Clone returns a new connection with the same conneciton information
+// Clone returns a new connection with the same connection information
 // as the one this is being called on
 func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	d2, err = New(d.Username, d.Password, d.Host, d.Port)
@@ -602,6 +602,105 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		if err != nil {
 			return
 		}
+
+		for _, tks := range records {
+			e := &Email{}
+			skip := 0
+			success := true
+			for i, t := range tks {
+				if skip > 0 {
+					skip--
+					continue
+				}
+				if err = d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
+					return
+				}
+				switch t.Str {
+				case "BODY[]":
+					if err = d.CheckType(tks[i+1], []TType{TAtom}, tks, "after BODY[]"); err != nil {
+						return
+					}
+					msg := tks[i+1].Str
+					r := strings.NewReader(msg)
+
+					env, err := enmime.ReadEnvelope(r)
+					if err != nil {
+						if Verbose {
+							log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
+							spew.Dump(env)
+							spew.Dump(msg)
+							os.Exit(0)
+						}
+						success = false
+
+						// continue RecL
+					} else {
+
+						e.Subject = env.GetHeader("Subject")
+						e.Text = env.Text
+						e.HTML = env.HTML
+
+						if len(env.Attachments) != 0 {
+							for _, a := range env.Attachments {
+								e.Attachments = append(e.Attachments, Attachment{
+									Name:     a.FileName,
+									MimeType: a.ContentType,
+									Content:  a.Content,
+								})
+							}
+						}
+
+						if len(env.Inlines) != 0 {
+							for _, a := range env.Inlines {
+								e.Attachments = append(e.Attachments, Attachment{
+									Name:     a.FileName,
+									MimeType: a.ContentType,
+									Content:  a.Content,
+								})
+							}
+						}
+
+						for _, a := range []struct {
+							dest   *EmailAddresses
+							header string
+						}{
+							{&e.From, "From"},
+							{&e.ReplyTo, "Reply-To"},
+							{&e.To, "To"},
+							{&e.CC, "cc"},
+							{&e.BCC, "bcc"},
+						} {
+							alist, _ := env.AddressList(a.header)
+							(*a.dest) = make(map[string]string, len(alist))
+							for _, addr := range alist {
+								(*a.dest)[strings.ToLower(addr.Address)] = addr.Name
+							}
+						}
+					}
+					skip++
+				case "UID":
+					if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
+						return
+					}
+					e.UID = tks[i+1].Num
+					skip++
+				}
+			}
+
+			if success {
+				emails[e.UID].Subject = e.Subject
+				emails[e.UID].From = e.From
+				emails[e.UID].ReplyTo = e.ReplyTo
+				emails[e.UID].To = e.To
+				emails[e.UID].CC = e.CC
+				emails[e.UID].BCC = e.BCC
+				emails[e.UID].Text = e.Text
+				emails[e.UID].HTML = e.HTML
+				emails[e.UID].Attachments = e.Attachments
+			} else {
+				delete(emails, e.UID)
+			}
+		}
 		return
 	}, RetryCount, func(err error) error {
 		log(d.ConnNum, d.Folder, Red(Bold(err)))
@@ -610,106 +709,6 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	}, func() error {
 		return d.Reconnect()
 	})
-
-	// RecL:
-	for _, tks := range records {
-		e := &Email{}
-		skip := 0
-		success := true
-		for i, t := range tks {
-			if skip > 0 {
-				skip--
-				continue
-			}
-			if err = d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
-				return nil, err
-			}
-			switch t.Str {
-			case "BODY[]":
-				if err = d.CheckType(tks[i+1], []TType{TAtom}, tks, "after BODY[]"); err != nil {
-					return nil, err
-				}
-				msg := tks[i+1].Str
-				r := strings.NewReader(msg)
-
-				env, err := enmime.ReadEnvelope(r)
-				if err != nil {
-					if Verbose {
-						log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
-						spew.Dump(env)
-						spew.Dump(msg)
-						os.Exit(0)
-					}
-					success = false
-
-					// continue RecL
-				} else {
-
-					e.Subject = env.GetHeader("Subject")
-					e.Text = env.Text
-					e.HTML = env.HTML
-
-					if len(env.Attachments) != 0 {
-						for _, a := range env.Attachments {
-							e.Attachments = append(e.Attachments, Attachment{
-								Name:     a.FileName,
-								MimeType: a.ContentType,
-								Content:  a.Content,
-							})
-						}
-					}
-
-					if len(env.Inlines) != 0 {
-						for _, a := range env.Inlines {
-							e.Attachments = append(e.Attachments, Attachment{
-								Name:     a.FileName,
-								MimeType: a.ContentType,
-								Content:  a.Content,
-							})
-						}
-					}
-
-					for _, a := range []struct {
-						dest   *EmailAddresses
-						header string
-					}{
-						{&e.From, "From"},
-						{&e.ReplyTo, "Reply-To"},
-						{&e.To, "To"},
-						{&e.CC, "cc"},
-						{&e.BCC, "bcc"},
-					} {
-						alist, _ := env.AddressList(a.header)
-						(*a.dest) = make(map[string]string, len(alist))
-						for _, addr := range alist {
-							(*a.dest)[strings.ToLower(addr.Address)] = addr.Name
-						}
-					}
-				}
-				skip++
-			case "UID":
-				if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
-					return nil, err
-				}
-				e.UID = tks[i+1].Num
-				skip++
-			}
-		}
-
-		if success {
-			emails[e.UID].Subject = e.Subject
-			emails[e.UID].From = e.From
-			emails[e.UID].ReplyTo = e.ReplyTo
-			emails[e.UID].To = e.To
-			emails[e.UID].CC = e.CC
-			emails[e.UID].BCC = e.BCC
-			emails[e.UID].Text = e.Text
-			emails[e.UID].HTML = e.HTML
-			emails[e.UID].Attachments = e.Attachments
-		} else {
-			delete(emails, e.UID)
-		}
-	}
 
 	return
 }
