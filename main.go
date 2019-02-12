@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -629,7 +628,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 							log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
 							spew.Dump(env)
 							spew.Dump(msg)
-							os.Exit(0)
+							// os.Exit(0)
 						}
 						success = false
 
@@ -815,7 +814,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 				if err = d.CheckType(tks[i+1].Tokens[EDate], []TType{TQuoted, TNil}, tks, "for ENVELOPE[%d]", EDate); err != nil {
 					return nil, err
 				}
-				if err = d.CheckType(tks[i+1].Tokens[ESubject], []TType{TQuoted, TNil}, tks, "for ENVELOPE[%d]", ESubject); err != nil {
+				if err = d.CheckType(tks[i+1].Tokens[ESubject], []TType{TQuoted, TAtom, TNil}, tks, "for ENVELOPE[%d]", ESubject); err != nil {
 					return nil, err
 				}
 
@@ -927,6 +926,7 @@ const (
 	TContainer
 )
 
+// TimeFormat is the Go time version of the IMAP times
 const TimeFormat = "02-Jan-2006 15:04:05 -0700"
 
 type tokenContainer *[]*Token
@@ -1033,14 +1033,15 @@ func (d *Dialer) ParseFetchResponse(r string) (records [][]*Token, err error) {
 				switch {
 				case unicode.IsDigit(rune(b)):
 				default:
-					tokenEnd = i - 1
-					size, err := strconv.Atoi(string(r[tokenStart : tokenEnd+1]))
+					tokenEnd = i
+					size, err := strconv.Atoi(string(r[tokenStart:tokenEnd]))
 					if err != nil {
 						return nil, err
 					}
-					tokenStart = tokenEnd + 2 + len(nl)
+					i += len("}") + len(nl)
+					tokenStart = i
 					tokenEnd = tokenStart + size - 1
-					i += size
+					i = tokenEnd
 					pushToken()
 				}
 			}
