@@ -181,6 +181,9 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		var conn *tls.Conn
 		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
 		if err != nil {
+			if Verbose {
+				log(connNum, "", Red(Bold(fmt.Sprintf("failed to connect: %s", err))))
+			}
 			return err
 		}
 		d = &Dialer{
@@ -197,7 +200,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	}, RetryCount, func(err error) error {
 		if Verbose {
 			log(connNum, "", Brown(Bold("failed to establish connection, retrying shortly")))
-			if d.conn != nil {
+			if d != nil && d.conn != nil {
 				d.conn.Close()
 			}
 		}
@@ -471,7 +474,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 
 		skip := false
 		for _, ef := range excludedFolders {
-			if strings.HasPrefix(f, ef) {
+			if f == ef {
 				skip = true
 				break
 			}
