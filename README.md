@@ -121,9 +121,9 @@ func main() {
 
 ## Built With
 
-- [jhillyerd/enmime](github.com/jhillyerd/enmime) - MIME mail encoding and decoding library for Go
-- [logrusorgru/aurora](github.com/logrusorgru/aurora) - Golang ultimate ANSI-colors that supports Printf/Sprintf methods
-- [dustin/go-humanize](github.com/dustin/go-humanize) - Go Humans! (formatters for units to human friendly sizes)
+- [jhillyerd/enmime](https://github.com/jhillyerd/enmime) - MIME mail encoding and decoding library for Go
+- [logrusorgru/aurora](https://github.com/logrusorgru/aurora) - Golang ultimate ANSI-colors that supports Printf/Sprintf methods
+- [dustin/go-humanize](https://github.com/dustin/go-humanize) - Go Humans! (formatters for units to human friendly sizes)
 
 ## Authors
 
