@@ -402,6 +402,9 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 		if b := bytes.IndexByte(line, '\n'); b != -1 {
 			folders = append(folders, string(line[b+1:]))
 		} else {
+			if len(line) == 0 {
+				return
+			}
 			i := len(line) - 1
 			quoted := line[i] == '"'
 			delim := byte(' ')
