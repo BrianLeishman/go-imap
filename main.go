@@ -18,7 +18,8 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime"
-	. "github.com/logrusorgru/aurora"
+	"github.com/logrusorgru/aurora"
+	"github.com/rs/xid"
 	"golang.org/x/net/html/charset"
 )
 
@@ -96,7 +97,7 @@ func (e EmailAddresses) String() string {
 				emails.WriteString(fmt.Sprintf(`%s <%s>`, n, e))
 			}
 		} else {
-			emails.WriteString(fmt.Sprintf("%s", e))
+			emails.WriteString(e)
 		}
 		i++
 	}
@@ -161,7 +162,7 @@ func log(connNum int, folder string, msg interface{}) {
 	} else {
 		name = fmt.Sprintf("IMAP%d", connNum)
 	}
-	fmt.Println(Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), Colorize(name, CyanFg|BoldFm), msg))
+	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
 }
 
 // New makes a new imap
@@ -176,13 +177,13 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 
 	err = retry.Retry(func() error {
 		if Verbose {
-			log(connNum, "", Green(Bold("establishing connection")))
+			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
 		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
 		if err != nil {
 			if Verbose {
-				log(connNum, "", Red(Bold(fmt.Sprintf("failed to connect: %s", err))))
+				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
 			}
 			return err
 		}
@@ -199,7 +200,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return d.Login(username, password)
 	}, RetryCount, func(err error) error {
 		if Verbose {
-			log(connNum, "", Brown(Bold("failed to establish connection, retrying shortly")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("failed to establish connection, retrying shortly")))
 			if d != nil && d.conn != nil {
 				d.conn.Close()
 			}
@@ -207,13 +208,13 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return nil
 	}, func() error {
 		if Verbose {
-			log(connNum, "", Brown(Bold("retrying failed connection now")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("retrying failed connection now")))
 		}
 		return nil
 	})
 	if err != nil {
 		if Verbose {
-			log(connNum, "", Red(Bold("failed to establish connection")))
+			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
 			if d.conn != nil {
 				d.conn.Close()
 			}
@@ -242,7 +243,7 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 func (d *Dialer) Close() (err error) {
 	if d.Connected {
 		if Verbose {
-			log(d.ConnNum, d.Folder, Brown(Bold("closing connection")))
+			log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("closing connection")))
 		}
 		err = d.conn.Close()
 		if err != nil {
@@ -257,7 +258,7 @@ func (d *Dialer) Close() (err error) {
 func (d *Dialer) Reconnect() (err error) {
 	d.Close()
 	if Verbose {
-		log(d.ConnNum, d.Folder, Brown(Bold("reopening connection")))
+		log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
 	}
 	d2, err := d.Clone()
 	if err != nil {
@@ -286,12 +287,12 @@ var atom = regexp.MustCompile(`{\d+}$`)
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
-		tag := []byte(fmt.Sprintf("%X", bid2()))
+		tag := []byte(fmt.Sprintf("%X", xid.New()))
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 		if Verbose {
-			log(d.ConnNum, d.Folder, strings.Replace(fmt.Sprintf("%s %s", Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`, -1))
+			log(d.ConnNum, d.Folder, strings.Replace(fmt.Sprintf("%s %s", aurora.Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`, -1))
 		}
 
 		_, err = d.conn.Write([]byte(c))
@@ -364,7 +365,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		return
 	}, retryCount, func(err error) error {
 		if Verbose {
-			log(d.ConnNum, d.Folder, Red(err))
+			log(d.ConnNum, d.Folder, aurora.Red(err))
 		}
 		d.Close()
 		return nil
@@ -373,7 +374,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 	})
 	if err != nil {
 		if Verbose {
-			log(d.ConnNum, d.Folder, Red(Bold("All retries failed")))
+			log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold("All retries failed")))
 		}
 		return "", err
 	}
@@ -631,7 +632,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 					env, err := enmime.ReadEnvelope(r)
 					if err != nil {
 						if Verbose {
-							log(d.ConnNum, d.Folder, Brown(Sprintf("email body could not be parsed, skipping: %s", err)))
+							log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Sprintf("email body could not be parsed, skipping: %s", err)))
 							spew.Dump(env)
 							spew.Dump(msg)
 							// os.Exit(0)
@@ -708,7 +709,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		}
 		return
 	}, RetryCount, func(err error) error {
-		log(d.ConnNum, d.Folder, Red(Bold(err)))
+		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
 		d.Close()
 		return nil
 	}, func() error {
@@ -754,7 +755,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		}
 		return
 	}, RetryCount, func(err error) error {
-		log(d.ConnNum, d.Folder, Red(Bold(err)))
+		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
 		d.Close()
 		return nil
 	}, func() error {
@@ -950,7 +951,7 @@ func (d *Dialer) ParseFetchResponse(r string) (records [][]*Token, err error) {
 		}
 
 		if !ok {
-			return nil, fmt.Errorf("Unable to parse Fetch line %#v", string(r[:d.GetStrtokI()]))
+			return nil, fmt.Errorf("unable to parse Fetch line %#v", string(r[:d.GetStrtokI()]))
 		}
 
 		tokens := make([]*Token, 0)
@@ -1160,7 +1161,7 @@ func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, 
 	if !ok {
 		types := ""
 		for i, a := range acceptableTypes {
-			if i != i {
+			if i != 0 {
 				types += "|"
 			}
 			types += GetTokenName(a)
