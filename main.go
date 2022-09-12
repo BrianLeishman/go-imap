@@ -934,7 +934,7 @@ const (
 )
 
 // TimeFormat is the Go time version of the IMAP times
-const TimeFormat = "02-Jan-2006 15:04:05 -0700"
+const TimeFormat = "_2-Jan-2006 15:04:05 -0700"
 
 type tokenContainer *[]*Token
 
