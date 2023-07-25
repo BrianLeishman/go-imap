@@ -345,13 +345,16 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			// 	fmt.Println(f.Name())
 			// }
 
-			if len(line) >= 19 && bytes.Equal(line[:16], tag) {
-				if !bytes.Equal(line[17:19], []byte("OK")) {
-					err = fmt.Errorf("imap command failed: %s", line[20:])
-					return
-				}
-				break
-			}
+			// XID project is returning 40-byte tags. The code was originally hardcoded 16 digits. 
+			taglen := len(tag)
+                        oklen := 3
+			if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
+                                if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
+                                        err = fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
+                                        return
+                                }
+                                break
+                        }
 
 			if processLine != nil {
 				if err = processLine(line); err != nil {
