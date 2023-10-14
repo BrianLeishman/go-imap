@@ -345,16 +345,16 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			// 	fmt.Println(f.Name())
 			// }
 
-			// XID project is returning 40-byte tags. The code was originally hardcoded 16 digits. 
+			// XID project is returning 40-byte tags. The code was originally hardcoded 16 digits.
 			taglen := len(tag)
-                        oklen := 3
+			oklen := 3
 			if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
-                                if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
-                                        err = fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
-                                        return
-                                }
-                                break
-                        }
+				if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
+					err = fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
+					return
+				}
+				break
+			}
 
 			if processLine != nil {
 				if err = processLine(line); err != nil {
@@ -517,6 +517,16 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 // SelectFolder selects a folder
 func (d *Dialer) SelectFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	if err != nil {
+		return
+	}
+	d.Folder = folder
+	return nil
+}
+
+// Move a read email to a specified folder
+func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
+	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return
 	}
