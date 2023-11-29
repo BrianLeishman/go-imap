@@ -107,7 +107,7 @@ func main() {
 			// (yes, I said "one of", don't expect the emails to be returned in any particular order)
 			fmt.Print(emails[0])
 
-			im.MoveEmail(email[0].UID, "INBOX/My Folder")
+			im.MoveEmail(emails[0].UID, "INBOX/My Folder")
 			// Subject: FW: FW:  FW:  New Order
 			// To: Brian Leishman <brian@stumpyinc.com>
 			// From: Customer Service <sales@totallylegitdomain.com>
