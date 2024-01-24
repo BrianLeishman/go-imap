@@ -215,7 +215,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	if err != nil {
 		if Verbose {
 			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
-			if d.conn != nil {
+			if d != nil && d.conn != nil {
 				d.conn.Close()
 			}
 		}
