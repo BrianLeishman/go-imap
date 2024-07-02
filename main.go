@@ -436,6 +436,68 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 	return folders, nil
 }
 
+func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
+	index := 0
+	event := ""
+	if _, err := fmt.Sscanf(string(data), "%d %s", &index, &event); err != nil {
+		return fmt.Errorf("invalid IDLE event format: %s", data)
+	}
+	switch event {
+	case IdleEventExists:
+		if handler.OnExists != nil {
+			handler.OnExists(ExistsEvent{MessageIndex: index})
+
+		}
+	case IdleEventExpunge:
+		if handler.OnExpunge != nil {
+			handler.OnExpunge(ExpungeEvent{MessageIndex: index})
+		}
+	case IdleEventFetch:
+		if handler.OnFetch == nil {
+			return nil
+		}
+		str := `9 FETCH (UID 64 FLAGS (\Seen \Answered \Flagged))`
+		re := regexp.MustCompile(`(\d+) FETCH \(UID (\d+) FLAGS \((.*)\)\)`)
+		matches := re.FindStringSubmatch(str)
+		if len(matches) == 4 {
+			messageIndex, _ := strconv.Atoi(matches[1])
+			uid, _ := strconv.Atoi(matches[2])
+			flags := strings.FieldsFunc(strings.ReplaceAll(matches[3], `\`, ""), func(r rune) bool {
+				return unicode.IsSpace(r) || r == ','
+			})
+			handler.OnFetch(FetchEvent{MessageIndex: messageIndex, UID: uint32(uid), Flags: flags})
+		} else {
+			return fmt.Errorf("invalid FETCH event format: %s", data)
+		}
+	}
+
+	return nil
+}
+
+func (d *Dialer) StartIdle(handler *IdleHandler) error {
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		if _, err := d.Exec("IDLE", true, 0, func(line []byte) (err error) {
+			if bytes.HasPrefix(line, []byte("* ")) {
+				err := d.runIdleEvent(line[2:], handler)
+				if err != nil {
+					fmt.Println(err)
+					return err
+				}
+
+			} else if bytes.Equal(line, []byte("OK IDLE terminated")) {
+				done <- nil
+			}
+			return
+		}); err != nil {
+			done <- err
+			return
+		}
+	}()
+	return nil
+}
+
 var regexExists = regexp.MustCompile(`\*\s+(\d+)\s+EXISTS`)
 
 // GetTotalEmailCount returns the total number of emails in every folder
