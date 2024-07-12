@@ -769,6 +769,9 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 			}
 
 			if success {
+				if emails[e.UID] == nil {
+					emails[e.UID] = &Email{UID: e.UID}
+				}
 				emails[e.UID].Subject = e.Subject
 				emails[e.UID].From = e.From
 				emails[e.UID].ReplyTo = e.ReplyTo
