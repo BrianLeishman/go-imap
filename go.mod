@@ -20,6 +20,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.2 // indirect
+	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	golang.org/x/text v0.3.7 // indirect
 )
