@@ -20,6 +20,7 @@ import (
 	"github.com/jhillyerd/enmime"
 	"github.com/logrusorgru/aurora"
 	"github.com/rs/xid"
+	"github.com/sqs/go-xoauth2"
 	"golang.org/x/net/html/charset"
 )
 
@@ -163,6 +164,66 @@ func log(connNum int, folder string, msg interface{}) {
 		name = fmt.Sprintf("IMAP%d", connNum)
 	}
 	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
+}
+
+// NewWithOAuth2 makes a new imap with OAuth2
+func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
+	nextConnNumMutex.RLock()
+	connNum := nextConnNum
+	nextConnNumMutex.RUnlock()
+
+	nextConnNumMutex.Lock()
+	nextConnNum++
+	nextConnNumMutex.Unlock()
+
+	err = retry.Retry(func() error {
+		if Verbose {
+			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
+		}
+		var conn *tls.Conn
+		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		if err != nil {
+			if Verbose {
+				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
+			}
+			return err
+		}
+		d = &Dialer{
+			conn:      conn,
+			Username:  username,
+			Password:  accessToken,
+			Host:      host,
+			Port:      port,
+			Connected: true,
+			ConnNum:   connNum,
+		}
+
+		return d.Authenticate(username, accessToken)
+	}, RetryCount, func(err error) error {
+		if Verbose {
+			log(connNum, "", aurora.Yellow(aurora.Bold("failed to establish connection, retrying shortly")))
+			if d != nil && d.conn != nil {
+				d.conn.Close()
+			}
+		}
+		return nil
+	}, func() error {
+		if Verbose {
+			log(connNum, "", aurora.Yellow(aurora.Bold("retrying failed connection now")))
+		}
+		return nil
+	})
+	if err != nil {
+		if Verbose {
+			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
+			if d != nil && d.conn != nil {
+				d.conn.Close()
+			}
+		}
+		return nil, err
+	}
+
+	return
 }
 
 // New makes a new imap
@@ -389,6 +450,12 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		}
 		return "", nil
 	}
+	return
+}
+
+func (d *Dialer) Authenticate(user string, accessToken string) (err error) {
+	b64 := xoauth2.XOAuth2String(user, accessToken)
+	_, err = d.Exec(fmt.Sprintf("AUTHENTICATE XOAUTH2 %s", b64), false, RetryCount, nil)
 	return
 }
 
