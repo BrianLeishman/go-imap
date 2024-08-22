@@ -710,7 +710,7 @@ const (
 )
 
 // GetEmails returns email with their bodies for the given UIDs in the current folder.
-// If no UIDs are given, they everything in the current folder is selected
+// If no UIDs are given, then everything in the current folder is selected
 func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	emails, err = d.GetOverviews(uids...)
 	if err != nil {
@@ -865,7 +865,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 }
 
 // GetOverviews returns emails without bodies for the given UIDs in the current folder.
-// If no UIDs are given, they everything in the current folder is selected
+// If no UIDs are given, then everything in the current folder is selected
 func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
