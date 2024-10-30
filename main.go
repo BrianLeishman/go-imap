@@ -995,7 +995,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 						}
 						*a.dest = make(map[string]string, len(tks[i+1].Tokens[EFrom].Tokens))
 						for i, t := range tks[i+1].Tokens[a.pos].Tokens {
-							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
+							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
 								return nil, err
 							}
 							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
