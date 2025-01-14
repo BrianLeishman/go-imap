@@ -45,6 +45,7 @@ var lastResp string
 type Dialer struct {
 	conn      *tls.Conn
 	Folder    string
+	ReadOnly  bool
 	Username  string
 	Password  string
 	Host      string
@@ -292,7 +293,11 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	d2, err = New(d.Username, d.Password, d.Host, d.Port)
 	// d2.Verbose = d1.Verbose
 	if d.Folder != "" {
-		err = d2.SelectFolder(d.Folder)
+		if d.ReadOnly {
+			err = d2.ExamineFolder(d.Folder)
+		} else {
+			err = d2.SelectFolder(d.Folder)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("imap clone: %s", err)
 		}
@@ -619,7 +624,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 			continue
 		}
 
-		err = d.SelectFolder(f)
+		err = d.ExamineFolder(f)
 		if err != nil {
 			return
 		}
@@ -634,7 +639,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	}
 
 	if len(folder) != 0 {
-		err = d.SelectFolder(folder)
+		err = d.ExamineFolder(folder)
 		if err != nil {
 			return
 		}
@@ -643,19 +648,39 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	return
 }
 
-// SelectFolder selects a folder
-func (d *Dialer) SelectFolder(folder string) (err error) {
+// ExamineFolder selects a folder
+func (d *Dialer) ExamineFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return
 	}
 	d.Folder = folder
+	d.ReadOnly = true
+	return nil
+}
+
+// SelectFolder selects a folder
+func (d *Dialer) SelectFolder(folder string) (err error) {
+	_, err = d.Exec(`SELECT "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	if err != nil {
+		return
+	}
+	d.Folder = folder
+	d.ReadOnly = false
 	return nil
 }
 
 // Move a read email to a specified folder
 func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
+	// if we are currently read-only, switch to SELECT for the move-operation
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
 	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
 	if err != nil {
 		return
 	}
