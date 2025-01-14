@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,6 +84,15 @@ type Attachment struct {
 	Name     string
 	MimeType string
 	Content  []byte
+}
+
+type Flags struct {
+	Seen     *bool
+	Answered *bool
+	Flagged  *bool
+	Deleted  *bool
+	Draft    *bool
+	Keywords map[string]bool
 }
 
 func (e EmailAddresses) String() string {
@@ -686,6 +696,63 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	}
 	d.Folder = folder
 	return nil
+}
+
+// set system-flags and keywords
+func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
+	// craft the flags-string
+	addFlags := []string{}
+	removeFlags := []string{}
+
+	v := reflect.ValueOf(flags)
+	t := reflect.TypeOf(flags)
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		// Check if the field is of type *bool
+		if field.Type == reflect.TypeOf((*bool)(nil)) {
+			// if the field isn't nil, add it to the slices
+			if !value.IsNil() { // Check if the pointer is not nil
+				boolValue := value.Elem().Bool() // Dereference the pointer to get the boolean value
+				if boolValue {
+					addFlags = append(addFlags, `\`+field.Name)
+				} else {
+					removeFlags = append(removeFlags, `\`+field.Name)
+				}
+			}
+		}
+	}
+
+	// iterate over the keyword-map and add those too to the slices
+	for keyword, state := range flags.Keywords {
+		if state {
+			addFlags = append(addFlags, keyword)
+		} else {
+			removeFlags = append(removeFlags, keyword)
+		}
+	}
+
+	query := fmt.Sprintf("UID STORE %d", uid)
+	if len(addFlags) > 0 {
+		query += fmt.Sprintf(` +FLAGS (%s)`, strings.Join(addFlags, " "))
+	}
+	if len(removeFlags) > 0 {
+		query += fmt.Sprintf(` -FLAGS (%s)`, strings.Join(removeFlags, " "))
+	}
+
+	// if we are currently read-only, switch to SELECT for the move-operation
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	_, err = d.Exec(query, true, RetryCount, nil)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+
+	return err
 }
 
 // GetUIDs returns the UIDs in the current folder that match the search
