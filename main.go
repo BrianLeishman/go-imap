@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,6 +84,23 @@ type Attachment struct {
 	Name     string
 	MimeType string
 	Content  []byte
+}
+
+type FlagSet int
+
+const (
+	FlagUnset FlagSet = iota
+	FlagAdd
+	FlagRemove
+)
+
+type Flags struct {
+	Seen     FlagSet
+	Answered FlagSet
+	Flagged  FlagSet
+	Deleted  FlagSet
+	Draft    FlagSet
+	Keywords map[string]bool
 }
 
 func (e EmailAddresses) String() string {
@@ -686,6 +704,77 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	}
 	d.Folder = folder
 	return nil
+}
+
+// mark an emai as seen
+func (d *Dialer) MarkSeen(uid int) (err error) {
+	flags := Flags{
+		Seen: FlagAdd,
+	}
+
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	err = d.SetFlags(uid, flags)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+
+	return
+}
+
+// set system-flags and keywords
+func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
+	// craft the flags-string
+	addFlags := []string{}
+	removeFlags := []string{}
+
+	v := reflect.ValueOf(flags)
+	t := reflect.TypeOf(flags)
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		if field.Type == reflect.TypeOf(FlagUnset) {
+			switch FlagSet(value.Int()) {
+			case FlagAdd:
+				addFlags = append(addFlags, `\`+field.Name)
+			case FlagRemove:
+				removeFlags = append(removeFlags, `\`+field.Name)
+			}
+		}
+	}
+
+	// iterate over the keyword-map and add those too to the slices
+	for keyword, state := range flags.Keywords {
+		if state {
+			addFlags = append(addFlags, keyword)
+		} else {
+			removeFlags = append(removeFlags, keyword)
+		}
+	}
+
+	query := fmt.Sprintf("UID STORE %d", uid)
+	if len(addFlags) > 0 {
+		query += fmt.Sprintf(` +FLAGS (%s)`, strings.Join(addFlags, " "))
+	}
+	if len(removeFlags) > 0 {
+		query += fmt.Sprintf(` -FLAGS (%s)`, strings.Join(removeFlags, " "))
+	}
+
+	// if we are currently read-only, switch to SELECT for the move-operation
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	_, err = d.Exec(query, true, RetryCount, nil)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+
+	return err
 }
 
 // GetUIDs returns the UIDs in the current folder that match the search
