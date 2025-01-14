@@ -653,6 +653,16 @@ func (d *Dialer) ExamineFolder(folder string) (err error) {
 	return nil
 }
 
+// SelectFolder selects a folder
+func (d *Dialer) SelectFolder(folder string) (err error) {
+	_, err = d.Exec(`SELECT "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	if err != nil {
+		return
+	}
+	d.Folder = folder
+	return nil
+}
+
 // Move a read email to a specified folder
 func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
