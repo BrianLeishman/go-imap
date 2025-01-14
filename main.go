@@ -292,7 +292,7 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	d2, err = New(d.Username, d.Password, d.Host, d.Port)
 	// d2.Verbose = d1.Verbose
 	if d.Folder != "" {
-		err = d2.SelectFolder(d.Folder)
+		err = d2.ExamineFolder(d.Folder)
 		if err != nil {
 			return nil, fmt.Errorf("imap clone: %s", err)
 		}
@@ -619,7 +619,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 			continue
 		}
 
-		err = d.SelectFolder(f)
+		err = d.ExamineFolder(f)
 		if err != nil {
 			return
 		}
@@ -634,7 +634,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	}
 
 	if len(folder) != 0 {
-		err = d.SelectFolder(folder)
+		err = d.ExamineFolder(folder)
 		if err != nil {
 			return
 		}
@@ -643,8 +643,8 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	return
 }
 
-// SelectFolder selects a folder
-func (d *Dialer) SelectFolder(folder string) (err error) {
+// ExamineFolder selects a folder
+func (d *Dialer) ExamineFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return
