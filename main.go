@@ -698,6 +698,25 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	return nil
 }
 
+// mark an emai as seen
+func (d *Dialer) MarkSeen(uid int) (err error) {
+	True := true
+	flags := Flags{
+		Seen: &True,
+	}
+
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	err = d.SetFlags(uid, flags)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+
+	return
+}
+
 // set system-flags and keywords
 func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// craft the flags-string
