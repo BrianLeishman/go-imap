@@ -86,12 +86,20 @@ type Attachment struct {
 	Content  []byte
 }
 
+type FlagSet int
+
+const (
+	FlagUnset FlagSet = iota
+	FlagAdd
+	FlagRemove
+)
+
 type Flags struct {
-	Seen     *bool
-	Answered *bool
-	Flagged  *bool
-	Deleted  *bool
-	Draft    *bool
+	Seen     FlagSet
+	Answered FlagSet
+	Flagged  FlagSet
+	Deleted  FlagSet
+	Draft    FlagSet
 	Keywords map[string]bool
 }
 
@@ -700,9 +708,8 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 
 // mark an emai as seen
 func (d *Dialer) MarkSeen(uid int) (err error) {
-	True := true
 	flags := Flags{
-		Seen: &True,
+		Seen: FlagAdd,
 	}
 
 	readOnlyState := d.ReadOnly
@@ -730,16 +737,12 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 		field := t.Field(i)
 		value := v.Field(i)
 
-		// Check if the field is of type *bool
-		if field.Type == reflect.TypeOf((*bool)(nil)) {
-			// if the field isn't nil, add it to the slices
-			if !value.IsNil() { // Check if the pointer is not nil
-				boolValue := value.Elem().Bool() // Dereference the pointer to get the boolean value
-				if boolValue {
-					addFlags = append(addFlags, `\`+field.Name)
-				} else {
-					removeFlags = append(removeFlags, `\`+field.Name)
-				}
+		if field.Type == reflect.TypeOf(FlagUnset) {
+			switch FlagSet(value.Int()) {
+			case FlagAdd:
+				addFlags = append(addFlags, `\`+field.Name)
+			case FlagRemove:
+				removeFlags = append(removeFlags, `\`+field.Name)
 			}
 		}
 	}
