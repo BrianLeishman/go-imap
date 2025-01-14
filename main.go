@@ -672,7 +672,15 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 
 // Move a read email to a specified folder
 func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
+	// if we are currently read-only, switch to SELECT for the move-operation
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
 	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
 	if err != nil {
 		return
 	}
