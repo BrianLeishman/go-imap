@@ -45,6 +45,7 @@ var lastResp string
 type Dialer struct {
 	conn      *tls.Conn
 	Folder    string
+	ReadOnly  bool
 	Username  string
 	Password  string
 	Host      string
@@ -292,7 +293,11 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	d2, err = New(d.Username, d.Password, d.Host, d.Port)
 	// d2.Verbose = d1.Verbose
 	if d.Folder != "" {
-		err = d2.ExamineFolder(d.Folder)
+		if d.ReadOnly {
+			err = d2.ExamineFolder(d.Folder)
+		} else {
+			err = d2.SelectFolder(d.Folder)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("imap clone: %s", err)
 		}
@@ -650,6 +655,7 @@ func (d *Dialer) ExamineFolder(folder string) (err error) {
 		return
 	}
 	d.Folder = folder
+	d.ReadOnly = true
 	return nil
 }
 
@@ -660,6 +666,7 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 		return
 	}
 	d.Folder = folder
+	d.ReadOnly = false
 	return nil
 }
 
