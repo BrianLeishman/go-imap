@@ -40,7 +40,11 @@ func main() {
 	// If a retried function fails, the connection will be closed, then the program sleeps for an increasing amount of time,
 	// creates a new connection instance internally, selects the same folder, and retries the failed command(s).
 	// You can check out github.com/StirlingMarketingGroup/go-retry for the retry implementation being used
-	imap.RetryCount = 3
+        imap.RetryCount = 3
+
+        // Allow connecting to servers with self-signed certificates.
+        // Use with caution as this disables TLS verification.
+        imap.SkipTLSVerification = true
 
 	// Create a new instance of the IMAP connection you want to use
 	im, err := imap.New("username", "password", "mail.server.com", 993)

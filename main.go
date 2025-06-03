@@ -40,6 +40,11 @@ var SkipResponses = false
 // RetryCount is the number of times retired functions get retried
 var RetryCount = 10
 
+// SkipTLSVerification disables certificate verification when establishing TLS
+// connections. This should be used with caution as it makes connections
+// susceptible to man-in-the-middle attacks.
+var SkipTLSVerification = false
+
 var lastResp string
 
 // Dialer is basically an IMAP connection
@@ -210,7 +215,11 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		var tlsConf *tls.Config
+		if SkipTLSVerification {
+			tlsConf = &tls.Config{InsecureSkipVerify: true}
+		}
+		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), tlsConf)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -270,7 +279,11 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		var tlsConf *tls.Config
+		if SkipTLSVerification {
+			tlsConf = &tls.Config{InsecureSkipVerify: true}
+		}
+		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), tlsConf)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
