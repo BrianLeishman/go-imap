@@ -45,6 +45,13 @@ var RetryCount = 10
 // susceptible to man-in-the-middle attacks.
 var SkipTLSVerification = false
 
+func tlsConfig() *tls.Config {
+	if SkipTLSVerification {
+		return &tls.Config{InsecureSkipVerify: true}
+	}
+	return nil
+}
+
 var lastResp string
 
 // Dialer is basically an IMAP connection
@@ -215,10 +222,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		var tlsConf *tls.Config
-		if SkipTLSVerification {
-			tlsConf = &tls.Config{InsecureSkipVerify: true}
-		}
+		tlsConf := tlsConfig()
 		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), tlsConf)
 		if err != nil {
 			if Verbose {
@@ -279,10 +283,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		var tlsConf *tls.Config
-		if SkipTLSVerification {
-			tlsConf = &tls.Config{InsecureSkipVerify: true}
-		}
+		tlsConf := tlsConfig()
 		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), tlsConf)
 		if err != nil {
 			if Verbose {
