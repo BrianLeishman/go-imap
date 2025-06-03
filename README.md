@@ -1,4 +1,6 @@
 ﻿# Simple IMAP Client Library
+[![Go](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml/badge.svg)](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/BrianLeishman/go-imap)](https://goreportcard.com/report/github.com/BrianLeishman/go-imap)
+
 
 I wasn't able to find an IMAP client I liked (or found easy to use), so, now there's also this one. My goal here is to allow people to download emails quickly, and robustly, that's it.
 
