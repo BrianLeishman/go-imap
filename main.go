@@ -799,6 +799,37 @@ func (d *Dialer) MarkSeen(uid int) (err error) {
 	return
 }
 
+// DeleteEmail marks an email as deleted
+func (d *Dialer) DeleteEmail(uid int) (err error) {
+	flags := Flags{
+		Deleted: FlagAdd,
+	}
+
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	err = d.SetFlags(uid, flags)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+
+	return
+}
+
+// Expunge permanently removes messages marked as deleted in the current folder
+func (d *Dialer) Expunge() (err error) {
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		d.SelectFolder(d.Folder)
+	}
+	_, err = d.Exec("EXPUNGE", false, RetryCount, nil)
+	if readOnlyState {
+		d.ExamineFolder(d.Folder)
+	}
+	return
+}
+
 // set system-flags and keywords
 func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// craft the flags-string

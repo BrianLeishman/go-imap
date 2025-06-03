@@ -107,16 +107,20 @@ func main() {
 		if len(emails) != 0 {
 			// Should print a summary of one of the the emails
 			// (yes, I said "one of", don't expect the emails to be returned in any particular order)
-			fmt.Print(emails[0])
+                       fmt.Print(emails[0])
 
-			im.MoveEmail(emails[0].UID, "INBOX/My Folder")
-			// Subject: FW: FW:  FW:  New Order
-			// To: Brian Leishman <brian@stumpyinc.com>
-			// From: Customer Service <sales@totallylegitdomain.com>
-			// Text: Hello, World!...(4.3 kB)
-			// HTML: <html xmlns:v="urn:s... (35 kB)
-			// 1 Attachment(s): [20180330174029.jpg (192 kB)]
-		}
+                       im.MoveEmail(emails[0].UID, "INBOX/My Folder")
+                       // Subject: FW: FW:  FW:  New Order
+                       // To: Brian Leishman <brian@stumpyinc.com>
+                       // From: Customer Service <sales@totallylegitdomain.com>
+                       // Text: Hello, World!...(4.3 kB)
+                       // HTML: <html xmlns:v="urn:s... (35 kB)
+                       // 1 Attachment(s): [20180330174029.jpg (192 kB)]
+
+                       // Mark the message as deleted then expunge it
+                       im.DeleteEmail(emails[0].UID)
+                       im.Expunge()
+               }
 
 	}
 
