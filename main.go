@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"net"
+
 	retry "github.com/StirlingMarketingGroup/go-retry"
 	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
@@ -39,6 +41,14 @@ var SkipResponses = false
 
 // RetryCount is the number of times retired functions get retried
 var RetryCount = 10
+
+// DialTimeout defines how long to wait when establishing a new connection.
+// Zero means no timeout.
+var DialTimeout time.Duration
+
+// CommandTimeout defines how long to wait for a command to complete.
+// Zero means no timeout.
+var CommandTimeout time.Duration
 
 var lastResp string
 
@@ -195,6 +205,11 @@ func log(connNum int, folder string, msg interface{}) {
 	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
 }
 
+func dialHost(host string, port int) (*tls.Conn, error) {
+	dialer := &net.Dialer{Timeout: DialTimeout}
+	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), nil)
+}
+
 // NewWithOAuth2 makes a new imap with OAuth2
 func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
 	nextConnNumMutex.RLock()
@@ -210,7 +225,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -270,7 +285,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -394,6 +409,11 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
 		tag := []byte(fmt.Sprintf("%X", xid.New()))
+
+		if CommandTimeout != 0 {
+			d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+			defer d.conn.SetDeadline(time.Time{})
+		}
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
