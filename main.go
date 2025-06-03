@@ -358,7 +358,19 @@ func (d *Dialer) Reconnect() (err error) {
 	if err != nil {
 		return fmt.Errorf("imap reconnect: %s", err)
 	}
-	*d = *d2
+	// Avoid copying the embedded mutex by assigning fields explicitly
+	d.conn = d2.conn
+	d.Folder = d2.Folder
+	d.ReadOnly = d2.ReadOnly
+	d.Username = d2.Username
+	d.Password = d2.Password
+	d.Host = d2.Host
+	d.Port = d2.Port
+	d.Connected = d2.Connected
+	d.ConnNum = d2.ConnNum
+	d.state = d2.state
+	d.idleStop = d2.idleStop
+	d.idleDone = d2.idleDone
 	return
 }
 
