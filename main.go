@@ -55,6 +55,10 @@ type Dialer struct {
 	strtok    string
 	Connected bool
 	ConnNum   int
+	state     int
+	stateMu   sync.Mutex
+	idleStop  chan struct{}
+	idleDone  chan struct{}
 }
 
 // EmailAddresses are a map of email address to names
@@ -78,6 +82,14 @@ type Email struct {
 	HTML        string
 	Attachments []Attachment
 }
+
+const (
+	StateDisconnected = iota
+	StateConnected
+	StateSelected
+	StateIdling
+	StateStoppingIdle
+)
 
 // Attachment is an Email attachment
 type Attachment struct {
@@ -536,7 +548,6 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 	case IdleEventExists:
 		if handler.OnExists != nil {
 			handler.OnExists(ExistsEvent{MessageIndex: index})
-
 		}
 	case IdleEventExpunge:
 		if handler.OnExpunge != nil {
@@ -546,8 +557,8 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 		if handler.OnFetch == nil {
 			return nil
 		}
-		str := `9 FETCH (UID 64 FLAGS (\Seen \Answered \Flagged))`
-		re := regexp.MustCompile(`(\d+) FETCH \(UID (\d+) FLAGS \((.*)\)\)`)
+		str := string(data)
+		re := regexp.MustCompile(`(?i)^(\d+)\s+FETCH\s+\(([^)]*FLAGS\s*\(([^)]*)\)[^)]*)`)
 		matches := re.FindStringSubmatch(str)
 		if len(matches) == 4 {
 			messageIndex, _ := strconv.Atoi(matches[1])
@@ -565,27 +576,81 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 }
 
 func (d *Dialer) StartIdle(handler *IdleHandler) error {
-	done := make(chan error, 1)
+	if d.State() == StateIdling {
+		return fmt.Errorf("already in IDLE")
+	}
+	d.idleStop = make(chan struct{})
+	d.idleDone = make(chan struct{})
+	d.setState(StateIdling)
 	go func() {
-		defer close(done)
-		if _, err := d.Exec("IDLE", true, 0, func(line []byte) (err error) {
-			if bytes.HasPrefix(line, []byte("* ")) {
-				err := d.runIdleEvent(line[2:], handler)
-				if err != nil {
-					fmt.Println(err)
-					return err
-				}
-
-			} else if bytes.Equal(line, []byte("OK IDLE terminated")) {
-				done <- nil
+		defer func() {
+			close(d.idleStop)
+			if d.State() == StateIdling {
+				d.setState(StateSelected)
 			}
-			return
-		}); err != nil {
-			done <- err
-			return
+		}()
+		_, err := d.Exec("IDLE", true, 0, func(line []byte) error {
+			fmt.Println("IDLE response:", string(line))
+			switch {
+			case bytes.Equal(line, []byte("+")):
+				return nil
+			case bytes.HasPrefix(line, []byte("* ")):
+				strLine := string(line[2:])
+				if strings.HasPrefix(strLine, "OK") {
+					return nil
+				}
+				return d.runIdleEvent([]byte(strLine), handler)
+			case bytes.Contains(line, []byte("OK IDLE terminated")):
+				d.setState(StateSelected)
+				return nil
+			case bytes.Contains(line, []byte("OK")):
+				return nil
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Println("IDLE error:", err)
+			d.setState(StateDisconnected)
 		}
 	}()
+
 	return nil
+}
+
+func (d *Dialer) StopIdle() error {
+	if d.State() != StateIdling {
+		return fmt.Errorf("not in IDLE state")
+	}
+	fmt.Println("[DEBUG] Sending DONE...")
+	if _, err := d.conn.Write([]byte("DONE\r\n")); err != nil {
+		return fmt.Errorf("failed to send DONE: %v", err)
+	}
+	d.setState(StateStoppingIdle)
+	close(d.idleDone)
+	go func() {
+		<-d.idleStop
+		fmt.Println("[DEBUG] IDLE fully stopped")
+		d.idleDone, d.idleStop = nil, nil
+		if d.State() == StateStoppingIdle {
+			d.setState(StateSelected)
+		}
+	}()
+
+	return nil
+}
+
+func (d *Dialer) setState(s int) {
+	oldState := d.state
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	d.state = s
+	fmt.Printf("State changed: %d -> %d\n", oldState, s)
+}
+
+func (d *Dialer) State() int {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	return d.state
 }
 
 var regexExists = regexp.MustCompile(`\*\s+(\d+)\s+EXISTS`)
