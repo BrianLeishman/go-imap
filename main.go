@@ -205,6 +205,11 @@ func log(connNum int, folder string, msg interface{}) {
 	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
 }
 
+func dialHost(host string, port int) (*tls.Conn, error) {
+	dialer := &net.Dialer{Timeout: DialTimeout}
+	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), nil)
+}
+
 // NewWithOAuth2 makes a new imap with OAuth2
 func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
 	nextConnNumMutex.RLock()
@@ -220,8 +225,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		dialer := &net.Dialer{Timeout: DialTimeout}
-		conn, err = tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -281,8 +285,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		dialer := &net.Dialer{Timeout: DialTimeout}
-		conn, err = tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
