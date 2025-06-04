@@ -50,6 +50,11 @@ var DialTimeout time.Duration
 // Zero means no timeout.
 var CommandTimeout time.Duration
 
+// TLSSkipVerify disables certificate verification when establishing new
+// connections. Use with caution; skipping verification exposes the
+// connection to man-in-the-middle attacks.
+var TLSSkipVerify bool
+
 var lastResp string
 
 // Dialer is basically an IMAP connection
@@ -207,7 +212,11 @@ func log(connNum int, folder string, msg interface{}) {
 
 func dialHost(host string, port int) (*tls.Conn, error) {
 	dialer := &net.Dialer{Timeout: DialTimeout}
-	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), nil)
+	var cfg *tls.Config
+	if TLSSkipVerify {
+		cfg = &tls.Config{InsecureSkipVerify: true}
+	}
+	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), cfg)
 }
 
 // NewWithOAuth2 makes a new imap with OAuth2
