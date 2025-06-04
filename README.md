@@ -118,8 +118,10 @@ func main() {
                        // 1 Attachment(s): [20180330174029.jpg (192 kB)]
 
                        // Mark the message as deleted then expunge it
-                       im.DeleteEmail(emails[0].UID)
-                       im.Expunge()
+                       err = im.DeleteEmail(emails[0].UID)
+                       check(err)
+                       err = im.Expunge()
+                       check(err)
                }
 
 	}

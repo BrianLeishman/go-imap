@@ -807,11 +807,15 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		d.SelectFolder(d.Folder)
+		if err = d.SelectFolder(d.Folder); err != nil {
+			return
+		}
 	}
 	err = d.SetFlags(uid, flags)
 	if readOnlyState {
-		d.ExamineFolder(d.Folder)
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
 	}
 
 	return
@@ -821,11 +825,15 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 func (d *Dialer) Expunge() (err error) {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		d.SelectFolder(d.Folder)
+		if err = d.SelectFolder(d.Folder); err != nil {
+			return
+		}
 	}
 	_, err = d.Exec("EXPUNGE", false, RetryCount, nil)
 	if readOnlyState {
-		d.ExamineFolder(d.Folder)
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
 	}
 	return
 }
