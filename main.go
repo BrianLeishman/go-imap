@@ -87,6 +87,7 @@ const (
 	StateDisconnected = iota
 	StateConnected
 	StateSelected
+	StateIdlePending
 	StateIdling
 	StateStoppingIdle
 )
@@ -547,11 +548,11 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 	switch event {
 	case IdleEventExists:
 		if handler.OnExists != nil {
-			handler.OnExists(ExistsEvent{MessageIndex: index})
+			go handler.OnExists(ExistsEvent{MessageIndex: index})
 		}
 	case IdleEventExpunge:
 		if handler.OnExpunge != nil {
-			handler.OnExpunge(ExpungeEvent{MessageIndex: index})
+			go handler.OnExpunge(ExpungeEvent{MessageIndex: index})
 		}
 	case IdleEventFetch:
 		if handler.OnFetch == nil {
@@ -566,7 +567,7 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 			flags := strings.FieldsFunc(strings.ReplaceAll(matches[3], `\`, ""), func(r rune) bool {
 				return unicode.IsSpace(r) || r == ','
 			})
-			handler.OnFetch(FetchEvent{MessageIndex: messageIndex, UID: uint32(uid), Flags: flags})
+			go handler.OnFetch(FetchEvent{MessageIndex: messageIndex, UID: uint32(uid), Flags: flags})
 		} else {
 			return fmt.Errorf("invalid FETCH event format: %s", data)
 		}
@@ -576,12 +577,16 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 }
 
 func (d *Dialer) StartIdle(handler *IdleHandler) error {
-	if d.State() == StateIdling {
-		return fmt.Errorf("already in IDLE")
+	if d.State() == StateIdling || d.State() == StateIdlePending {
+		return fmt.Errorf("already entering or in IDLE")
 	}
+
+	d.setState(StateIdlePending)
+
 	d.idleStop = make(chan struct{})
 	d.idleDone = make(chan struct{})
-	d.setState(StateIdling)
+	idleReady := make(chan struct{})
+
 	go func() {
 		defer func() {
 			close(d.idleStop)
@@ -589,10 +594,13 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 				d.setState(StateSelected)
 			}
 		}()
+
 		_, err := d.Exec("IDLE", true, 0, func(line []byte) error {
-			fmt.Println("IDLE response:", string(line))
+			line = []byte(strings.ToUpper(string(line)))
 			switch {
-			case bytes.Equal(line, []byte("+")):
+			case bytes.HasPrefix(line, []byte("+")):
+				d.setState(StateIdling)
+				close(idleReady)
 				return nil
 			case bytes.HasPrefix(line, []byte("* ")):
 				strLine := string(line[2:])
@@ -600,51 +608,61 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 					return nil
 				}
 				return d.runIdleEvent([]byte(strLine), handler)
-			case bytes.Contains(line, []byte("OK IDLE terminated")):
-				d.setState(StateSelected)
-				return nil
-			case bytes.Contains(line, []byte("OK")):
+			case bytes.HasPrefix(line, []byte("OK ")):
+				strLine := string(line[3:])
+				if strings.HasPrefix(strLine, "IDLE") {
+					d.setState(StateSelected)
+				}
 				return nil
 			}
 			return nil
 		})
+
 		if err != nil {
-			fmt.Println("IDLE error:", err)
+			if Verbose {
+				log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("IDLE error: %v", err)))
+			}
 			d.setState(StateDisconnected)
 		}
 	}()
 
-	return nil
+	select {
+	case <-idleReady:
+		return nil
+	case <-time.After(5 * time.Second):
+		d.setState(StateSelected)
+		return fmt.Errorf("timeout waiting for + IDLE response")
+	}
 }
 
 func (d *Dialer) StopIdle() error {
 	if d.State() != StateIdling {
 		return fmt.Errorf("not in IDLE state")
 	}
-	fmt.Println("[DEBUG] Sending DONE...")
+
+	if Verbose {
+		log(d.ConnNum, d.Folder, aurora.Bold("-> DONE"))
+	}
 	if _, err := d.conn.Write([]byte("DONE\r\n")); err != nil {
 		return fmt.Errorf("failed to send DONE: %v", err)
 	}
+
 	d.setState(StateStoppingIdle)
 	close(d.idleDone)
-	go func() {
-		<-d.idleStop
-		fmt.Println("[DEBUG] IDLE fully stopped")
-		d.idleDone, d.idleStop = nil, nil
-		if d.State() == StateStoppingIdle {
-			d.setState(StateSelected)
-		}
-	}()
+
+	<-d.idleStop
+	d.idleDone, d.idleStop = nil, nil
+	if d.State() == StateStoppingIdle {
+		d.setState(StateSelected)
+	}
 
 	return nil
 }
 
 func (d *Dialer) setState(s int) {
-	oldState := d.state
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	d.state = s
-	fmt.Printf("State changed: %d -> %d\n", oldState, s)
 }
 
 func (d *Dialer) State() int {
