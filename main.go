@@ -1351,8 +1351,7 @@ func parseFetchTokens(r string) ([]*Token, error) {
 	tokenStart := 0
 	tokenEnd := 0
 	depth := 0
-	container := make([]tokenContainer, 4)
-	container[0] = &tokens
+	container := []tokenContainer{&tokens}
 
 	pushToken := func() *Token {
 		var t *Token
@@ -1458,6 +1457,9 @@ func parseFetchTokens(r string) ([]*Token, error) {
 				currentToken = TContainer
 				t := pushToken()
 				depth++
+				if depth >= len(container) {
+					container = append(container, nil)
+				}
 				container[depth] = &t.Tokens
 			case b == ')':
 				depth--

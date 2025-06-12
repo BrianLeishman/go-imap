@@ -173,3 +173,11 @@ func TestEnvelopeAtomAddress(t *testing.T) {
 		t.Fatalf("got %q want %q", addr, name)
 	}
 }
+
+func TestParseFetchTokensDeepNesting(t *testing.T) {
+	r := "UID 1 FOO (BAR (BAZ (QUX (QUUX))))"
+	_, err := parseFetchTokens(r)
+	if err != nil {
+		t.Fatalf("parseFetchTokens error: %v", err)
+	}
+}
