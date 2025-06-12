@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 
+	"net"
+
 	retry "github.com/StirlingMarketingGroup/go-retry"
 	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
@@ -40,6 +42,19 @@ var SkipResponses = false
 // RetryCount is the number of times retired functions get retried
 var RetryCount = 10
 
+// DialTimeout defines how long to wait when establishing a new connection.
+// Zero means no timeout.
+var DialTimeout time.Duration
+
+// CommandTimeout defines how long to wait for a command to complete.
+// Zero means no timeout.
+var CommandTimeout time.Duration
+
+// TLSSkipVerify disables certificate verification when establishing new
+// connections. Use with caution; skipping verification exposes the
+// connection to man-in-the-middle attacks.
+var TLSSkipVerify bool
+
 var lastResp string
 
 // Dialer is basically an IMAP connection
@@ -51,8 +66,6 @@ type Dialer struct {
 	Password  string
 	Host      string
 	Port      int
-	strtokI   int
-	strtok    string
 	Connected bool
 	ConnNum   int
 	state     int
@@ -198,6 +211,15 @@ func log(connNum int, folder string, msg interface{}) {
 	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
 }
 
+func dialHost(host string, port int) (*tls.Conn, error) {
+	dialer := &net.Dialer{Timeout: DialTimeout}
+	var cfg *tls.Config
+	if TLSSkipVerify {
+		cfg = &tls.Config{InsecureSkipVerify: true}
+	}
+	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), cfg)
+}
+
 // NewWithOAuth2 makes a new imap with OAuth2
 func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
 	nextConnNumMutex.RLock()
@@ -213,7 +235,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -273,7 +295,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
 		}
 		var conn *tls.Conn
-		conn, err = tls.Dial("tcp", host+":"+strconv.Itoa(port), nil)
+		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
 				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
@@ -361,7 +383,19 @@ func (d *Dialer) Reconnect() (err error) {
 	if err != nil {
 		return fmt.Errorf("imap reconnect: %s", err)
 	}
-	*d = *d2
+	// Avoid copying the embedded mutex by assigning fields explicitly
+	d.conn = d2.conn
+	d.Folder = d2.Folder
+	d.ReadOnly = d2.ReadOnly
+	d.Username = d2.Username
+	d.Password = d2.Password
+	d.Host = d2.Host
+	d.Port = d2.Port
+	d.Connected = d2.Connected
+	d.ConnNum = d2.ConnNum
+	d.state = d2.state
+	d.idleStop = d2.idleStop
+	d.idleDone = d2.idleDone
 	return
 }
 
@@ -385,6 +419,11 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
 		tag := []byte(fmt.Sprintf("%X", xid.New()))
+
+		if CommandTimeout != 0 {
+			d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+			defer d.conn.SetDeadline(time.Time{})
+		}
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
@@ -664,6 +703,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 	}
 }
 
+
 func (d *Dialer) StopIdle() error {
 	if d.State() != StateIdling {
 		return fmt.Errorf("not in IDLE state")
@@ -836,6 +876,45 @@ func (d *Dialer) MarkSeen(uid int) (err error) {
 	return
 }
 
+// DeleteEmail marks an email as deleted
+func (d *Dialer) DeleteEmail(uid int) (err error) {
+	flags := Flags{
+		Deleted: FlagAdd,
+	}
+
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		if err = d.SelectFolder(d.Folder); err != nil {
+			return
+		}
+	}
+	err = d.SetFlags(uid, flags)
+	if readOnlyState {
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
+	}
+
+	return
+}
+
+// Expunge permanently removes messages marked as deleted in the current folder
+func (d *Dialer) Expunge() (err error) {
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		if err = d.SelectFolder(d.Folder); err != nil {
+			return
+		}
+	}
+	_, err = d.Exec("EXPUNGE", false, RetryCount, nil)
+	if readOnlyState {
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
+	}
+	return
+}
+
 // set system-flags and keywords
 func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// craft the flags-string
@@ -890,28 +969,31 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 }
 
 // GetUIDs returns the UIDs in the current folder that match the search
-func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
-	uids = make([]int, 0)
-	t := []byte{' ', '\r', '\n'}
-	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
-	if err != nil {
-		return nil, err
+func parseUIDSearchResponse(r string) ([]int, error) {
+	if idx := strings.Index(r, nl); idx != -1 {
+		r = r[:idx]
 	}
-	if d.StrtokInit(r, t) == "*" && d.Strtok(t) == "SEARCH" {
-		for {
-			uid := string(d.Strtok(t))
-			if len(uid) == 0 {
-				break
-			}
-			u, err := strconv.Atoi(string(uid))
+	fields := strings.Fields(r)
+	if len(fields) >= 2 && fields[0] == "*" && fields[1] == "SEARCH" {
+		uids := make([]int, 0, len(fields)-2)
+		for _, f := range fields[2:] {
+			u, err := strconv.Atoi(f)
 			if err != nil {
 				return nil, err
 			}
 			uids = append(uids, u)
 		}
+		return uids, nil
 	}
+	return nil, fmt.Errorf("invalid response: %q", r)
+}
 
-	return uids, nil
+func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
+	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
+	if err != nil {
+		return nil, err
+	}
+	return parseUIDSearchResponse(r)
 }
 
 const (
@@ -1221,13 +1303,13 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 						}
 						*a.dest = make(map[string]string, len(tks[i+1].Tokens[EFrom].Tokens))
 						for i, t := range tks[i+1].Tokens[a.pos].Tokens {
-							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
+							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
 								return nil, err
 							}
-							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
+							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
 								return nil, err
 							}
-							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
+							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
 								return nil, err
 							}
 
@@ -1310,158 +1392,182 @@ const TimeFormat = "_2-Jan-2006 15:04:05 -0700"
 type tokenContainer *[]*Token
 
 // ParseFetchResponse parses a response from a FETCH command into tokens
-func (d *Dialer) ParseFetchResponse(r string) (records [][]*Token, err error) {
-	records = make([][]*Token, 0)
-	for {
-		t := []byte{' ', '\r', '\n'}
-		ok := false
-		if string(d.StrtokInit(r, t)) == "*" {
-			if _, err := strconv.Atoi(string(d.Strtok(t))); err == nil && string(d.Strtok(t)) == "FETCH" {
-				ok = true
+func parseFetchTokens(r string) ([]*Token, error) {
+	tokens := make([]*Token, 0)
+
+	currentToken := TUnset
+	tokenStart := 0
+	tokenEnd := 0
+	depth := 0
+	container := make([]tokenContainer, 4)
+	container[0] = &tokens
+
+	pushToken := func() *Token {
+		var t *Token
+		switch currentToken {
+		case TQuoted:
+			t = &Token{
+				Type: currentToken,
+				Str:  RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1])),
 			}
-		}
-
-		if !ok {
-			return nil, fmt.Errorf("unable to parse Fetch line %#v", string(r[:d.GetStrtokI()]))
-		}
-
-		tokens := make([]*Token, 0)
-		r = r[d.GetStrtokI()+1:]
-
-		currentToken := TUnset
-		tokenStart := 0
-		tokenEnd := 0
-		// escaped := false
-		depth := 0
-		container := make([]tokenContainer, 4)
-		container[0] = &tokens
-
-		pushToken := func() *Token {
-			var t *Token
-			switch currentToken {
-			case TQuoted:
+		case TLiteral:
+			s := string(r[tokenStart : tokenEnd+1])
+			num, err := strconv.Atoi(s)
+			if err == nil {
 				t = &Token{
-					Type: currentToken,
-					Str:  RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1])),
+					Type: TNumber,
+					Num:  num,
 				}
-			case TLiteral:
-				s := string(r[tokenStart : tokenEnd+1])
-				num, err := strconv.Atoi(s)
-				if err == nil {
+			} else {
+				if s == "NIL" {
 					t = &Token{
-						Type: TNumber,
-						Num:  num,
+						Type: TNil,
 					}
 				} else {
-					if s == "NIL" {
-						t = &Token{
-							Type: TNil,
-						}
-					} else {
-						t = &Token{
-							Type: TLiteral,
-							Str:  s,
-						}
+					t = &Token{
+						Type: TLiteral,
+						Str:  s,
 					}
 				}
-			case TAtom:
-				t = &Token{
-					Type: currentToken,
-					Str:  string(r[tokenStart : tokenEnd+1]),
-				}
-			case TContainer:
-				t = &Token{
-					Type:   currentToken,
-					Tokens: make([]*Token, 0, 1),
-				}
 			}
-
-			if t != nil {
-				*container[depth] = append(*container[depth], t)
+		case TAtom:
+			t = &Token{
+				Type: currentToken,
+				Str:  string(r[tokenStart : tokenEnd+1]),
 			}
-			currentToken = TUnset
-
-			return t
+		case TContainer:
+			t = &Token{
+				Type:   currentToken,
+				Tokens: make([]*Token, 0, 1),
+			}
 		}
 
-		l := len(r)
-		i := 0
-		for i < l {
-			b := r[i]
+		if t != nil {
+			*container[depth] = append(*container[depth], t)
+		}
+		currentToken = TUnset
 
-			switch currentToken {
-			case TQuoted:
-				switch b {
-				case '"':
-					tokenEnd = i - 1
-					pushToken()
-					goto Cont
-				case '\\':
-					i++
-					goto Cont
-				}
-			case TLiteral:
-				switch {
-				case IsLiteral(rune(b)):
-				default:
-					tokenEnd = i - 1
-					pushToken()
-				}
-			case TAtom:
-				switch {
-				case unicode.IsDigit(rune(b)):
-				default:
-					tokenEnd = i
-					size, err := strconv.Atoi(string(r[tokenStart:tokenEnd]))
-					if err != nil {
-						return nil, err
-					}
-					i += len("}") + len(nl)
-					tokenStart = i
-					tokenEnd = tokenStart + size - 1
-					i = tokenEnd
-					pushToken()
-				}
-			}
+		return t
+	}
 
-			switch currentToken {
-			case TUnset:
-				switch {
-				case b == '"':
-					currentToken = TQuoted
-					tokenStart = i + 1
-				case IsLiteral(rune(b)):
-					currentToken = TLiteral
-					tokenStart = i
-				case b == '{':
-					currentToken = TAtom
-					tokenStart = i + 1
-				case b == '(':
-					currentToken = TContainer
-					t := pushToken()
-					depth++
-					container[depth] = &t.Tokens
-				case b == ')':
-					depth--
-				}
-			}
+	l := len(r)
+	i := 0
+	for i < l {
+		b := r[i]
 
-		Cont:
-			if depth < 0 {
-				break
+		switch currentToken {
+		case TQuoted:
+			switch b {
+			case '"':
+				tokenEnd = i - 1
+				pushToken()
+				goto Cont
+			case '\\':
+				i++
+				goto Cont
 			}
-			i++
-			if i >= l {
-				tokenEnd = l
+		case TLiteral:
+			switch {
+			case IsLiteral(rune(b)):
+			default:
+				tokenEnd = i - 1
+				pushToken()
+			}
+		case TAtom:
+			switch {
+			case unicode.IsDigit(rune(b)):
+			default:
+				tokenEnd = i
+				size, err := strconv.Atoi(string(r[tokenStart:tokenEnd]))
+				if err != nil {
+					return nil, err
+				}
+				i += len("}") + len(nl)
+				tokenStart = i
+				tokenEnd = tokenStart + size - 1
+				i = tokenEnd
 				pushToken()
 			}
 		}
-		records = append(records, tokens)
-		r = r[i+1+len(nl):]
 
-		if len(r) == 0 {
+		switch currentToken {
+		case TUnset:
+			switch {
+			case b == '"':
+				currentToken = TQuoted
+				tokenStart = i + 1
+			case IsLiteral(rune(b)):
+				currentToken = TLiteral
+				tokenStart = i
+			case b == '{':
+				currentToken = TAtom
+				tokenStart = i + 1
+			case b == '(':
+				currentToken = TContainer
+				t := pushToken()
+				depth++
+				container[depth] = &t.Tokens
+			case b == ')':
+				depth--
+			}
+		}
+
+	Cont:
+		if depth < 0 {
 			break
 		}
+		i++
+		if i >= l {
+			tokenEnd = l
+			pushToken()
+		}
+	}
+
+	if len(tokens) == 1 && tokens[0].Type == TContainer {
+		tokens = tokens[0].Tokens
+	}
+
+	return tokens, nil
+}
+
+func (d *Dialer) ParseFetchResponse(r string) (records [][]*Token, err error) {
+	records = make([][]*Token, 0)
+	for len(r) > 0 {
+		lineEnd := strings.Index(r, nl)
+		line := r
+		if lineEnd >= 0 {
+			line = r[:lineEnd]
+			r = r[lineEnd+len(nl):]
+		} else {
+			r = ""
+		}
+
+		line = strings.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		if !strings.HasPrefix(line, "* ") {
+			return nil, fmt.Errorf("unable to parse Fetch line %#v", line)
+		}
+		rest := line[2:]
+		idx := strings.IndexByte(rest, ' ')
+		if idx == -1 {
+			return nil, fmt.Errorf("unable to parse Fetch line %#v", line)
+		}
+		if _, err := strconv.Atoi(rest[:idx]); err != nil {
+			return nil, fmt.Errorf("unable to parse Fetch line %#v", line)
+		}
+		rest = strings.TrimSpace(rest[idx+1:])
+		if !strings.HasPrefix(rest, "FETCH ") {
+			return nil, fmt.Errorf("unable to parse Fetch line %#v", line)
+		}
+
+		tokens, err := parseFetchTokens(rest[len("FETCH "):])
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, tokens)
 	}
 
 	return

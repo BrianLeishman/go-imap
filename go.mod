@@ -1,6 +1,6 @@
 module github.com/BrianLeishman/go-imap
 
-go 1.19
+go 1.24
 
 require (
 	github.com/StirlingMarketingGroup/go-retry v0.0.0-20190512160921-94a8eb23e893
@@ -9,6 +9,7 @@ require (
 	github.com/jhillyerd/enmime v0.10.0
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/rs/xid v1.4.0
+	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
 	golang.org/x/net v0.0.0-20220909164309-bea034e7d591
 )
 
@@ -20,7 +21,6 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.2 // indirect
-	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	golang.org/x/text v0.3.7 // indirect
 )

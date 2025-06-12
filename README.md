@@ -1,4 +1,6 @@
 ﻿# Simple IMAP Client Library
+[![Go](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml/badge.svg)](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/BrianLeishman/go-imap)](https://goreportcard.com/report/github.com/BrianLeishman/go-imap)
+
 
 I wasn't able to find an IMAP client I liked (or found easy to use), so, now there's also this one. My goal here is to allow people to download emails quickly, and robustly, that's it.
 
@@ -38,7 +40,12 @@ func main() {
 	// If a retried function fails, the connection will be closed, then the program sleeps for an increasing amount of time,
 	// creates a new connection instance internally, selects the same folder, and retries the failed command(s).
 	// You can check out github.com/StirlingMarketingGroup/go-retry for the retry implementation being used
-	imap.RetryCount = 3
+        imap.RetryCount = 3
+
+        // Use TLSSkipVerify if you need to connect to a server with a self-signed
+        // certificate. Skipping verification can expose you to man-in-the-middle
+        // attacks, so enable only when you trust the server.
+        imap.TLSSkipVerify = true
 
 	// Create a new instance of the IMAP connection you want to use
 	im, err := imap.New("username", "password", "mail.server.com", 993)
@@ -105,16 +112,22 @@ func main() {
 		if len(emails) != 0 {
 			// Should print a summary of one of the the emails
 			// (yes, I said "one of", don't expect the emails to be returned in any particular order)
-			fmt.Print(emails[0])
+                       fmt.Print(emails[0])
 
-			im.MoveEmail(emails[0].UID, "INBOX/My Folder")
-			// Subject: FW: FW:  FW:  New Order
-			// To: Brian Leishman <brian@stumpyinc.com>
-			// From: Customer Service <sales@totallylegitdomain.com>
-			// Text: Hello, World!...(4.3 kB)
-			// HTML: <html xmlns:v="urn:s... (35 kB)
-			// 1 Attachment(s): [20180330174029.jpg (192 kB)]
-		}
+                       im.MoveEmail(emails[0].UID, "INBOX/My Folder")
+                       // Subject: FW: FW:  FW:  New Order
+                       // To: Brian Leishman <brian@stumpyinc.com>
+                       // From: Customer Service <sales@totallylegitdomain.com>
+                       // Text: Hello, World!...(4.3 kB)
+                       // HTML: <html xmlns:v="urn:s... (35 kB)
+                       // 1 Attachment(s): [20180330174029.jpg (192 kB)]
+
+                       // Mark the message as deleted then expunge it
+                       err = im.DeleteEmail(emails[0].UID)
+                       check(err)
+                       err = im.Expunge()
+                       check(err)
+               }
 
 	}
 
