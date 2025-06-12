@@ -577,6 +577,29 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 }
 
 func (d *Dialer) StartIdle(handler *IdleHandler) error {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			if err := d.startIdleSingle(handler); err != nil {
+				log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error: %v", err)))
+				return
+			}
+
+			select {
+			case <-ticker.C:
+				d.StopIdle()
+			case <-d.idleDone:
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 	if d.State() == StateIdling || d.State() == StateIdlePending {
 		return fmt.Errorf("already entering or in IDLE")
 	}
@@ -606,6 +629,12 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 				strLine := string(line[2:])
 				if strings.HasPrefix(strLine, "OK") {
 					return nil
+				}
+				if strings.HasPrefix(strLine, "BYE") {
+					log(d.ConnNum, d.Folder, aurora.Red("server closed connection: BYE"))
+					d.setState(StateDisconnected)
+					d.Close()
+					return fmt.Errorf("server sent BYE: %s", line)
 				}
 				return d.runIdleEvent([]byte(strLine), handler)
 			case bytes.HasPrefix(line, []byte("OK ")):
