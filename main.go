@@ -621,8 +621,19 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 		defer ticker.Stop()
 
 		for {
+			if !d.Connected {
+				err := d.Reconnect()
+				{
+					if Verbose {
+						log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error with reconnect: %v", err)))
+					}
+					return
+				}
+			}
 			if err := d.startIdleSingle(handler); err != nil {
-				log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error: %v", err)))
+				if Verbose {
+					log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error: %v", err)))
+				}
 				return
 			}
 
@@ -670,7 +681,6 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 					return nil
 				}
 				if strings.HasPrefix(strLine, "BYE") {
-					log(d.ConnNum, d.Folder, aurora.Red("server closed connection: BYE"))
 					d.setState(StateDisconnected)
 					d.Close()
 					return fmt.Errorf("server sent BYE: %s", line)
@@ -702,7 +712,6 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 		return fmt.Errorf("timeout waiting for + IDLE response")
 	}
 }
-
 
 func (d *Dialer) StopIdle() error {
 	if d.State() != StateIdling {
