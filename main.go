@@ -626,8 +626,7 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 
 		for {
 			if !d.Connected {
-				err := d.Reconnect()
-				{
+				if err := d.Reconnect(); err != nil {
 					if Verbose {
 						log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error with reconnect: %v", err)))
 					}
