@@ -379,23 +379,10 @@ func (d *Dialer) Reconnect() (err error) {
 	if Verbose {
 		log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
 	}
-	d2, err := d.Clone()
+	d.conn, err = dialHost(d.Host, d.Port)
 	if err != nil {
 		return fmt.Errorf("imap reconnect: %s", err)
 	}
-	// Avoid copying the embedded mutex by assigning fields explicitly
-	d.conn = d2.conn
-	d.Folder = d2.Folder
-	d.ReadOnly = d2.ReadOnly
-	d.Username = d2.Username
-	d.Password = d2.Password
-	d.Host = d2.Host
-	d.Port = d2.Port
-	d.Connected = d2.Connected
-	d.ConnNum = d2.ConnNum
-	d.state = d2.state
-	d.idleStop = d2.idleStop
-	d.idleDone = d2.idleDone
 	return
 }
 
