@@ -1,0 +1,18 @@
+run:
+  timeout: 3m
+  tests: false
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+
+issues:
+  # Keep output manageable; raise if you want more strictness later.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+

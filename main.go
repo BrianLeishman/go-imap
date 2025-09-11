@@ -384,7 +384,7 @@ func (d *Dialer) Close() (err error) {
 
 // Reconnect closes the current connection (if any) and establishes a new one
 func (d *Dialer) Reconnect() (err error) {
-    d.Close()
+    _ = d.Close()
     if Verbose {
         log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
     }
@@ -453,10 +453,10 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 	err = retry.Retry(func() (err error) {
 		tag := []byte(fmt.Sprintf("%X", xid.New()))
 
-		if CommandTimeout != 0 {
-			d.conn.SetDeadline(time.Now().Add(CommandTimeout))
-			defer d.conn.SetDeadline(time.Time{})
-		}
+        if CommandTimeout != 0 {
+            _ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+            defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
+        }
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
@@ -542,8 +542,8 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		d.Close()
 		return nil
 	}, func() error {
-		return d.Reconnect()
-	})
+        return d.Reconnect()
+    })
 	if err != nil {
 		if Verbose {
 			log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold("All retries failed")))
@@ -714,7 +714,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 				}
 				if strings.HasPrefix(strLine, "BYE") {
 					d.setState(StateDisconnected)
-					d.Close()
+    _ = d.Close()
 					return fmt.Errorf("server sent BYE: %s", line)
 				}
 				return d.runIdleEvent([]byte(strLine), handler)
@@ -1209,7 +1209,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		return
 	}, RetryCount, func(err error) error {
 		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
-		d.Close()
+                    _ = d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
@@ -1255,7 +1255,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		return
 	}, RetryCount, func(err error) error {
 		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
-		d.Close()
+        _ = d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
