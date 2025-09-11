@@ -76,6 +76,15 @@ Breaking API changes follow semver via `/vN` module paths. Internal refactors th
 
 ---
 
+## 10  Workflow policy (PR‑only)
+
+- Never push directly to the default branch (`master`).
+- Always open a pull request from a topic branch (e.g., `fix/...`, `feat/...`, `chore/...`, `docs/...`).
+- Keep PRs scoped and focused; include a short rationale and a test plan when applicable.
+- CI must be green (vet, race tests, linters) before merge.
+- Prefer "Squash and merge" to keep history tidy; the squash title should be descriptive.
+- For trivial changes (docs, CI), still use a PR — no direct commits.
+
 ### Appendix A – Go 1.24 features worth using
 
 | Feature                                | Where we’ll use it                                     |
