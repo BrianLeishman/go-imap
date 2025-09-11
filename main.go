@@ -1100,10 +1100,15 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 			return
 		}
 
-		for _, tks := range records {
-			e := &Email{}
-			skip := 0
-			success := true
+    for _, tks := range records {
+        // Some servers may wrap the FETCH content with extra parentheses.
+        // Flatten single-child containers defensively until we reach fields.
+        for len(tks) == 1 && tks[0].Type == TContainer {
+            tks = tks[0].Tokens
+        }
+        e := &Email{}
+        skip := 0
+        success := true
 			for i, t := range tks {
 				if skip > 0 {
 					skip--
@@ -1268,10 +1273,14 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
 	// RecordsL:
-	for _, tks := range records {
-		e := &Email{}
-		skip := 0
-		for i, t := range tks {
+    for _, tks := range records {
+        // Defensively flatten if the record is a single container wrapper.
+        for len(tks) == 1 && tks[0].Type == TContainer {
+            tks = tks[0].Tokens
+        }
+        e := &Email{}
+        skip := 0
+        for i, t := range tks {
 			if skip > 0 {
 				skip--
 				continue
