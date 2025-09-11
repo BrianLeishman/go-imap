@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -14,8 +15,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-
-	"net"
 
 	retry "github.com/StirlingMarketingGroup/go-retry"
 	"github.com/davecgh/go-spew/spew"
@@ -59,22 +58,22 @@ var lastResp string
 
 // Dialer is basically an IMAP connection
 type Dialer struct {
-    conn      *tls.Conn
-    Folder    string
-    ReadOnly  bool
-    Username  string
-    Password  string
-    Host      string
-    Port      int
-    Connected bool
-    ConnNum   int
-    state     int
-    stateMu   sync.Mutex
-    idleStop  chan struct{}
-    idleDone  chan struct{}
-    // useXOAUTH2 indicates whether XOAUTH2 authentication should be used
-    // on (re)connection instead of LOGIN. It is set by NewWithOAuth2.
-    useXOAUTH2 bool
+	conn      *tls.Conn
+	Folder    string
+	ReadOnly  bool
+	Username  string
+	Password  string
+	Host      string
+	Port      int
+	Connected bool
+	ConnNum   int
+	state     int
+	stateMu   sync.Mutex
+	idleStop  chan struct{}
+	idleDone  chan struct{}
+	// useXOAUTH2 indicates whether XOAUTH2 authentication should be used
+	// on (re)connection instead of LOGIN. It is set by NewWithOAuth2.
+	useXOAUTH2 bool
 }
 
 // EmailAddresses are a map of email address to names
@@ -201,8 +200,10 @@ func (a Attachment) String() string {
 	return fmt.Sprintf("%s (%s %s)", a.Name, a.MimeType, humanize.Bytes(uint64(len(a.Content))))
 }
 
-var nextConnNum = 0
-var nextConnNumMutex = sync.RWMutex{}
+var (
+	nextConnNum      = 0
+	nextConnNumMutex = sync.RWMutex{}
+)
 
 func log(connNum int, folder string, msg interface{}) {
 	var name string
@@ -233,6 +234,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 	nextConnNum++
 	nextConnNumMutex.Unlock()
 
+	// Retry only the connection establishment, not authentication
 	err = retry.Retry(func() error {
 		if Verbose {
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
@@ -245,21 +247,20 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			}
 			return err
 		}
-        d = &Dialer{
-            conn:      conn,
-            Username:  username,
-            Password:  accessToken,
-            Host:      host,
-            Port:      port,
-            Connected: true,
-            ConnNum:   connNum,
-            useXOAUTH2: true,
-        }
-
-		return d.Authenticate(username, accessToken)
+		d = &Dialer{
+			conn:       conn,
+			Username:   username,
+			Password:   accessToken,
+			Host:       host,
+			Port:       port,
+			Connected:  true,
+			ConnNum:    connNum,
+			useXOAUTH2: true,
+		}
+		return nil
 	}, RetryCount, func(err error) error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("failed to establish connection, retrying shortly")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
 			if d != nil && d.conn != nil {
 				d.conn.Close()
 			}
@@ -267,7 +268,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		return nil
 	}, func() error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("retrying failed connection now")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("retrying connection now")))
 		}
 		return nil
 	})
@@ -281,7 +282,17 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		return nil, err
 	}
 
-	return
+	// Authenticate after connection is established - no retry for auth failures
+	err = d.Authenticate(username, accessToken)
+	if err != nil {
+		if Verbose {
+			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
+		}
+		d.Close()
+		return nil, err
+	}
+
+	return d, nil
 }
 
 // New makes a new imap
@@ -294,6 +305,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	nextConnNum++
 	nextConnNumMutex.Unlock()
 
+	// Retry only the connection establishment, not authentication
 	err = retry.Retry(func() error {
 		if Verbose {
 			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
@@ -306,21 +318,20 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			}
 			return err
 		}
-        d = &Dialer{
-            conn:      conn,
-            Username:  username,
-            Password:  password,
-            Host:      host,
-            Port:      port,
-            Connected: true,
-            ConnNum:   connNum,
-            useXOAUTH2: false,
-        }
-
-		return d.Login(username, password)
+		d = &Dialer{
+			conn:       conn,
+			Username:   username,
+			Password:   password,
+			Host:       host,
+			Port:       port,
+			Connected:  true,
+			ConnNum:    connNum,
+			useXOAUTH2: false,
+		}
+		return nil
 	}, RetryCount, func(err error) error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("failed to establish connection, retrying shortly")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
 			if d != nil && d.conn != nil {
 				d.conn.Close()
 			}
@@ -328,7 +339,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return nil
 	}, func() error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("retrying failed connection now")))
+			log(connNum, "", aurora.Yellow(aurora.Bold("retrying connection now")))
 		}
 		return nil
 	})
@@ -342,29 +353,39 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return nil, err
 	}
 
-	return
+	// Authenticate after connection is established - no retry for auth failures
+	err = d.Login(username, password)
+	if err != nil {
+		if Verbose {
+			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
+		}
+		d.Close()
+		return nil, err
+	}
+
+	return d, nil
 }
 
 // Clone returns a new connection with the same connection information
 // as the one this is being called on
 func (d *Dialer) Clone() (d2 *Dialer, err error) {
-    if d.useXOAUTH2 {
-        d2, err = NewWithOAuth2(d.Username, d.Password, d.Host, d.Port)
-    } else {
-        d2, err = New(d.Username, d.Password, d.Host, d.Port)
-    }
-    // d2.Verbose = d1.Verbose
-    if d.Folder != "" {
-        if d.ReadOnly {
-            err = d2.ExamineFolder(d.Folder)
-        } else {
+	if d.useXOAUTH2 {
+		d2, err = NewWithOAuth2(d.Username, d.Password, d.Host, d.Port)
+	} else {
+		d2, err = New(d.Username, d.Password, d.Host, d.Port)
+	}
+	// d2.Verbose = d1.Verbose
+	if d.Folder != "" {
+		if d.ReadOnly {
+			err = d2.ExamineFolder(d.Folder)
+		} else {
 			err = d2.SelectFolder(d.Folder)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("imap clone: %s", err)
 		}
 	}
-	return
+	return d2, err
 }
 
 // Close closes the imap connection
@@ -379,53 +400,53 @@ func (d *Dialer) Close() (err error) {
 		}
 		d.Connected = false
 	}
-	return
+	return err
 }
 
 // Reconnect closes the current connection (if any) and establishes a new one
 func (d *Dialer) Reconnect() (err error) {
-    _ = d.Close()
-    if Verbose {
-        log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
-    }
+	_ = d.Close()
+	if Verbose {
+		log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
+	}
 
-    conn, err := dialHost(d.Host, d.Port)
-    if err != nil {
-        return fmt.Errorf("imap reconnect dial: %s", err)
-    }
-    d.conn = conn
-    d.Connected = true
+	conn, err := dialHost(d.Host, d.Port)
+	if err != nil {
+		return fmt.Errorf("imap reconnect dial: %s", err)
+	}
+	d.conn = conn
+	d.Connected = true
 
-    // Re-authenticate using the original method
-    if d.useXOAUTH2 {
-        if err := d.Authenticate(d.Username, d.Password); err != nil {
-            // Best effort cleanup on failure
-            d.conn.Close()
-            d.Connected = false
-            return fmt.Errorf("imap reconnect auth xoauth2: %s", err)
-        }
-    } else {
-        if err := d.Login(d.Username, d.Password); err != nil {
-            d.conn.Close()
-            d.Connected = false
-            return fmt.Errorf("imap reconnect login: %s", err)
-        }
-    }
+	// Re-authenticate using the original method
+	if d.useXOAUTH2 {
+		if err := d.Authenticate(d.Username, d.Password); err != nil {
+			// Best effort cleanup on failure
+			d.conn.Close()
+			d.Connected = false
+			return fmt.Errorf("imap reconnect auth xoauth2: %s", err)
+		}
+	} else {
+		if err := d.Login(d.Username, d.Password); err != nil {
+			d.conn.Close()
+			d.Connected = false
+			return fmt.Errorf("imap reconnect login: %s", err)
+		}
+	}
 
-    // Restore selected folder state if any
-    if d.Folder != "" {
-        if d.ReadOnly {
-            if err := d.ExamineFolder(d.Folder); err != nil {
-                return fmt.Errorf("imap reconnect examine: %s", err)
-            }
-        } else {
-            if err := d.SelectFolder(d.Folder); err != nil {
-                return fmt.Errorf("imap reconnect select: %s", err)
-            }
-        }
-    }
+	// Restore selected folder state if any
+	if d.Folder != "" {
+		if d.ReadOnly {
+			if err := d.ExamineFolder(d.Folder); err != nil {
+				return fmt.Errorf("imap reconnect examine: %s", err)
+			}
+		} else {
+			if err := d.SelectFolder(d.Folder); err != nil {
+				return fmt.Errorf("imap reconnect select: %s", err)
+			}
+		}
+	}
 
-    return nil
+	return nil
 }
 
 const nl = "\r\n"
@@ -453,10 +474,10 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 	err = retry.Retry(func() (err error) {
 		tag := []byte(fmt.Sprintf("%X", xid.New()))
 
-        if CommandTimeout != 0 {
-            _ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
-            defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
-        }
+		if CommandTimeout != 0 {
+			_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+			defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
+		}
 
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
@@ -466,7 +487,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 
 		_, err = d.conn.Write([]byte(c))
 		if err != nil {
-			return
+			return err
 		}
 
 		r := bufio.NewReader(d.conn)
@@ -483,19 +504,19 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 					var n int
 					n, err = strconv.Atoi(string(a[1 : len(a)-1]))
 					if err != nil {
-						return
+						return err
 					}
 
 					buf := make([]byte, n)
 					_, err = io.ReadFull(r, buf)
 					if err != nil {
-						return
+						return err
 					}
 					line = append(line, buf...)
 
 					buf, err = r.ReadBytes('\n')
 					if err != nil {
-						return
+						return err
 					}
 					line = append(line, buf...)
 
@@ -520,21 +541,21 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
 				if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
 					err = fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
-					return
+					return err
 				}
 				break
 			}
 
 			if processLine != nil {
 				if err = processLine(line); err != nil {
-					return
+					return err
 				}
 			}
 			if buildResponse {
 				resp.Write(line)
 			}
 		}
-		return
+		return err
 	}, retryCount, func(err error) error {
 		if Verbose {
 			log(d.ConnNum, d.Folder, aurora.Red(err))
@@ -542,8 +563,8 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		d.Close()
 		return nil
 	}, func() error {
-        return d.Reconnect()
-    })
+		return d.Reconnect()
+	})
 	if err != nil {
 		if Verbose {
 			log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold("All retries failed")))
@@ -558,19 +579,21 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		}
 		return "", nil
 	}
-	return
+	return response, err
 }
 
 func (d *Dialer) Authenticate(user string, accessToken string) (err error) {
 	b64 := xoauth2.XOAuth2String(user, accessToken)
-	_, err = d.Exec(fmt.Sprintf("AUTHENTICATE XOAUTH2 %s", b64), false, RetryCount, nil)
-	return
+	// Don't retry authentication - auth failures should not trigger reconnection
+	_, err = d.Exec(fmt.Sprintf("AUTHENTICATE XOAUTH2 %s", b64), false, 0, nil)
+	return err
 }
 
 // Login attempts to login
 func (d *Dialer) Login(username string, password string) (err error) {
-	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, RetryCount, nil)
-	return
+	// Don't retry authentication - auth failures should not trigger reconnection
+	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, 0, nil)
+	return err
 }
 
 // GetFolders returns all folders
@@ -582,7 +605,7 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 			folders = append(folders, string(line[b+1:]))
 		} else {
 			if len(line) == 0 {
-				return
+				return err
 			}
 			i := len(line) - 1
 			quoted := line[i] == '"'
@@ -602,7 +625,7 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 			}
 			folders = append(folders, RemoveSlashes.Replace(string(line[i+1:end+1])))
 		}
-		return
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -714,7 +737,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 				}
 				if strings.HasPrefix(strLine, "BYE") {
 					d.setState(StateDisconnected)
-    _ = d.Close()
+					_ = d.Close()
 					return fmt.Errorf("server sent BYE: %s", line)
 				}
 				return d.runIdleEvent([]byte(strLine), handler)
@@ -727,7 +750,6 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 			}
 			return nil
 		})
-
 		if err != nil {
 			if Verbose {
 				log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("IDLE error: %v", err)))
@@ -812,7 +834,7 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 
 	folders, err := d.GetFolders()
 	if err != nil {
-		return
+		return count, err
 	}
 
 	for _, f := range folders {
@@ -837,13 +859,13 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 
 		err = d.ExamineFolder(f)
 		if err != nil {
-			return
+			return count, err
 		}
 
 		var n int
 		n, err = strconv.Atoi(regexExists.FindStringSubmatch(lastResp)[1])
 		if err != nil {
-			return
+			return count, err
 		}
 
 		count += n
@@ -852,18 +874,18 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	if len(folder) != 0 {
 		err = d.ExamineFolder(folder)
 		if err != nil {
-			return
+			return count, err
 		}
 	}
 
-	return
+	return count, err
 }
 
 // ExamineFolder selects a folder
 func (d *Dialer) ExamineFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
-		return
+		return err
 	}
 	d.Folder = folder
 	d.ReadOnly = true
@@ -874,7 +896,7 @@ func (d *Dialer) ExamineFolder(folder string) (err error) {
 func (d *Dialer) SelectFolder(folder string) (err error) {
 	_, err = d.Exec(`SELECT "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
-		return
+		return err
 	}
 	d.Folder = folder
 	d.ReadOnly = false
@@ -893,7 +915,7 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 		d.ExamineFolder(d.Folder)
 	}
 	if err != nil {
-		return
+		return err
 	}
 	d.Folder = folder
 	return nil
@@ -914,7 +936,7 @@ func (d *Dialer) MarkSeen(uid int) (err error) {
 		d.ExamineFolder(d.Folder)
 	}
 
-	return
+	return err
 }
 
 // DeleteEmail marks an email as deleted
@@ -926,7 +948,7 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
 		if err = d.SelectFolder(d.Folder); err != nil {
-			return
+			return err
 		}
 	}
 	err = d.SetFlags(uid, flags)
@@ -936,7 +958,7 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 		}
 	}
 
-	return
+	return err
 }
 
 // Expunge permanently removes messages marked as deleted in the current folder
@@ -944,7 +966,7 @@ func (d *Dialer) Expunge() (err error) {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
 		if err = d.SelectFolder(d.Folder); err != nil {
-			return
+			return err
 		}
 	}
 	_, err = d.Exec("EXPUNGE", false, RetryCount, nil)
@@ -953,7 +975,7 @@ func (d *Dialer) Expunge() (err error) {
 			err = e
 		}
 	}
-	return
+	return err
 }
 
 // set system-flags and keywords
@@ -1067,7 +1089,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	}
 
 	if len(emails) == 0 {
-		return
+		return emails, err
 	}
 
 	uidsStr := strings.Builder{}
@@ -1092,35 +1114,35 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	err = retry.Retry(func() (err error) {
 		r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, 0, nil)
 		if err != nil {
-			return
+			return err
 		}
 
 		records, err = d.ParseFetchResponse(r)
 		if err != nil {
-			return
+			return err
 		}
 
-    for _, tks := range records {
-        // Some servers may wrap the FETCH content with extra parentheses.
-        // Flatten single-child containers defensively until we reach fields.
-        for len(tks) == 1 && tks[0].Type == TContainer {
-            tks = tks[0].Tokens
-        }
-        e := &Email{}
-        skip := 0
-        success := true
+		for _, tks := range records {
+			// Some servers may wrap the FETCH content with extra parentheses.
+			// Flatten single-child containers defensively until we reach fields.
+			for len(tks) == 1 && tks[0].Type == TContainer {
+				tks = tks[0].Tokens
+			}
+			e := &Email{}
+			skip := 0
+			success := true
 			for i, t := range tks {
 				if skip > 0 {
 					skip--
 					continue
 				}
 				if err = d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
-					return
+					return err
 				}
 				switch t.Str {
 				case "BODY[]":
 					if err = d.CheckType(tks[i+1], []TType{TAtom}, tks, "after BODY[]"); err != nil {
-						return
+						return err
 					}
 					msg := tks[i+1].Str
 					r := strings.NewReader(msg)
@@ -1182,7 +1204,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 					skip++
 				case "UID":
 					if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
-						return
+						return err
 					}
 					e.UID = tks[i+1].Num
 					skip++
@@ -1206,16 +1228,16 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 				delete(emails, e.UID)
 			}
 		}
-		return
+		return err
 	}, RetryCount, func(err error) error {
 		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
-                    _ = d.Close()
+		_ = d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
 	})
 
-	return
+	return emails, err
 }
 
 // GetOverviews returns emails without bodies for the given UIDs in the current folder.
@@ -1241,21 +1263,21 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	err = retry.Retry(func() (err error) {
 		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, 0, nil)
 		if err != nil {
-			return
+			return err
 		}
 
 		if len(r) == 0 {
-			return
+			return err
 		}
 
 		records, err = d.ParseFetchResponse(r)
 		if err != nil {
-			return
+			return err
 		}
-		return
+		return err
 	}, RetryCount, func(err error) error {
 		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
-        _ = d.Close()
+		_ = d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
@@ -1273,14 +1295,14 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	dec := mime.WordDecoder{CharsetReader: CharsetReader}
 
 	// RecordsL:
-    for _, tks := range records {
-        // Defensively flatten if the record is a single container wrapper.
-        for len(tks) == 1 && tks[0].Type == TContainer {
-            tks = tks[0].Tokens
-        }
-        e := &Email{}
-        skip := 0
-        for i, t := range tks {
+	for _, tks := range records {
+		// Defensively flatten if the record is a single container wrapper.
+		for len(tks) == 1 && tks[0].Type == TContainer {
+			tks = tks[0].Tokens
+		}
+		e := &Email{}
+		skip := 0
+		for i, t := range tks {
 			if skip > 0 {
 				skip--
 				continue
@@ -1404,7 +1426,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		emails[e.UID] = e
 	}
 
-	return
+	return emails, err
 }
 
 // Token is a fetch response token (e.g. a number, or a quoted section, or a container, etc.)
