@@ -1,145 +1,128 @@
-﻿# Simple IMAP Client Library
-[![Go](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml/badge.svg)](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/BrianLeishman/go-imap)](https://goreportcard.com/report/github.com/BrianLeishman/go-imap)
+# Go IMAP Client (go-imap)
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/BrianLeishman/go-imap.svg)](https://pkg.go.dev/github.com/BrianLeishman/go-imap)
+[![CI](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml/badge.svg)](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/BrianLeishman/go-imap)](https://goreportcard.com/report/github.com/BrianLeishman/go-imap)
 
-I wasn't able to find an IMAP client I liked (or found easy to use), so, now there's also this one. My goal here is to allow people to download emails quickly, and robustly, that's it.
+Simple, pragmatic IMAP client for Go (Golang) with TLS, LOGIN or XOAUTH2 (OAuth 2.0), IDLE notifications, robust reconnects, and batteries‑included helpers for searching, fetching, moving, and flagging messages.
 
-## Getting Started
+Works great with Gmail, Office 365/Exchange, and most RFC‑compliant IMAP servers.
 
-```shell
+## Features
+
+- TLS connections and timeouts (`DialTimeout`, `CommandTimeout`)
+- Authentication via `LOGIN` and `XOAUTH2`
+- Folders: `SELECT`/`EXAMINE`, list folders
+- Search: `UID SEARCH` helpers
+- Fetch: envelope, flags, size, text/HTML bodies, attachments
+- Mutations: move, set flags, delete + expunge
+- IMAP IDLE with event handlers for `EXISTS`, `EXPUNGE`, `FETCH`
+- Automatic reconnect with re‑auth and folder restore
+
+## Install
+
+```bash
 go get github.com/BrianLeishman/go-imap
 ```
 
-## Usage
+Requires Go 1.24+ (see `go.mod`).
 
-Below I've written a super basic demo function of what this library is capable of doing, and how one might use it.
+## Quick Start (LOGIN)
 
 ```go
 package main
 
 import (
-	"fmt"
-
-	"github.com/BrianLeishman/go-imap"
+    "fmt"
+    imap "github.com/BrianLeishman/go-imap"
 )
 
-func check(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
 func main() {
+    // Optional diagnostics
+    imap.Verbose = false
+    imap.RetryCount = 3
 
-	// Defaults to false. This package level option turns on or off debugging output, essentially.
-	// If verbose is set to true, then every command, and every response, is printed,
-	// along with other things like error messages (before the retry limit is reached)
-	imap.Verbose = true
+    // Timeouts (optional)
+    // imap.DialTimeout = 10 * time.Second
+    // imap.CommandTimeout = 30 * time.Second
 
-	// Defaults to 10. Certain functions retry; like the login function, and the new connection function.
-	// If a retried function fails, the connection will be closed, then the program sleeps for an increasing amount of time,
-	// creates a new connection instance internally, selects the same folder, and retries the failed command(s).
-	// You can check out github.com/StirlingMarketingGroup/go-retry for the retry implementation being used
-        imap.RetryCount = 3
+    // Connect & login
+    m, err := imap.New("username", "password", "mail.server.com", 993)
+    if err != nil { panic(err) }
+    defer m.Close()
 
-        // Use TLSSkipVerify if you need to connect to a server with a self-signed
-        // certificate. Skipping verification can expose you to man-in-the-middle
-        // attacks, so enable only when you trust the server.
-        imap.TLSSkipVerify = true
+    // List and select a folder
+    folders, err := m.GetFolders()
+    if err != nil { panic(err) }
+    fmt.Println("Folders:", folders)
+    if err := m.SelectFolder("INBOX"); err != nil { panic(err) }
 
-	// Create a new instance of the IMAP connection you want to use
-	im, err := imap.New("username", "password", "mail.server.com", 993)
-	check(err)
-	defer im.Close()
-
-	// Folders now contains a string slice of all the folder names on the connection
-	folders, err := im.GetFolders()
-	check(err)
-
-	// folders = []string{
-	// 	"INBOX",
-	// 	"INBOX/My Folder"
-	// 	"Sent Items",
-	// 	"Deleted",
-	// }
-
-	// Now we can loop through those folders
-	for _, f := range folders {
-
-		// And select each folder, one at a time.
-		// Whichever folder is selected last, is the current active folder.
-		// All following commands will be executing inside of this folder
-		err = im.SelectFolder(f)
-		check(err)
-
-		// This function implements the IMAP UID search, returning a slice of ints
-		// Sending "ALL" runs the command "UID SEARCH ALL"
-		// You can enter things like "*:1" to get the first UID, or "999999999:*"
-		// to get the last (unless you actually have more than that many emails)
-		// You can check out https://tools.ietf.org/html/rfc3501#section-6.4.4 for more
-		uids, err := im.GetUIDs("ALL")
-		check(err)
-
-		// uids = []int{1, 2, 3}
-
-		// GetEmails takes a list of ints as UIDs, and returns new Email objects.
-		// If an email for a given UID cannot be found, there's an error parsing its body,
-		// or the email addresses are malformed (like, missing parts of the address), then it is skipped
-		// If an email is found, then an imap.Email struct slice is returned with the information from the email.
-		// The Email struct looks like this:
-		// type Email struct {
-		// 	Flags     []string
-		// 	Received  time.Time
-		// 	Sent      time.Time
-		// 	Size      uint64
-		// 	Subject   string
-		// 	UID       int
-		// 	MessageID string
-		// 	From      EmailAddresses
-		// 	To        EmailAddresses
-		// 	ReplyTo   EmailAddresses
-		// 	CC        EmailAddresses
-		// 	BCC       EmailAddresses
-		// 	Text      string
-		// 	HTML      string
-		//	Attachments []Attachment
-		// }
-		// Where the address type fields are maps like [EmailAddress:Name EmailAddress2:Name2]
-		// and an Attachment is a struct containing the Name, Content, and the MimeType (both as strings)
-		emails, err := im.GetEmails(uids...)
-		check(err)
-
-		if len(emails) != 0 {
-			// Should print a summary of one of the the emails
-			// (yes, I said "one of", don't expect the emails to be returned in any particular order)
-                       fmt.Print(emails[0])
-
-                       im.MoveEmail(emails[0].UID, "INBOX/My Folder")
-                       // Subject: FW: FW:  FW:  New Order
-                       // To: Brian Leishman <brian@stumpyinc.com>
-                       // From: Customer Service <sales@totallylegitdomain.com>
-                       // Text: Hello, World!...(4.3 kB)
-                       // HTML: <html xmlns:v="urn:s... (35 kB)
-                       // 1 Attachment(s): [20180330174029.jpg (192 kB)]
-
-                       // Mark the message as deleted then expunge it
-                       err = im.DeleteEmail(emails[0].UID)
-                       check(err)
-                       err = im.Expunge()
-                       check(err)
-               }
-
-	}
-
+    // Search & fetch
+    uids, err := m.GetUIDs("ALL")
+    if err != nil { panic(err) }
+    emails, err := m.GetEmails(uids...)
+    if err != nil { panic(err) }
+    if len(emails) > 0 {
+        fmt.Println(emails[0])
+    }
 }
 ```
 
-## Built With
+## Quick Start (XOAUTH2 / OAuth 2.0)
 
-- [jhillyerd/enmime](https://github.com/jhillyerd/enmime) - MIME mail encoding and decoding library for Go
-- [logrusorgru/aurora](https://github.com/logrusorgru/aurora) - Golang ultimate ANSI-colors that supports Printf/Sprintf methods
-- [dustin/go-humanize](https://github.com/dustin/go-humanize) - Go Humans! (formatters for units to human friendly sizes)
+```go
+m, err := imap.NewWithOAuth2("user@example.com", accessToken, "imap.gmail.com", 993)
+if err != nil { panic(err) }
+defer m.Close()
 
-## Authors
+if err := m.SelectFolder("INBOX"); err != nil { panic(err) }
+```
 
-- **Brian Leishman** - [Stirling Marketing Group](https://github.com/StirlingMarketingGroup)
+## IDLE Notifications
+
+```go
+handler := &imap.IdleHandler{
+    OnExists: func(e imap.ExistsEvent) { fmt.Println("exists:", e.MessageIndex) },
+    OnExpunge: func(e imap.ExpungeEvent) { fmt.Println("expunge:", e.MessageIndex) },
+    OnFetch: func(e imap.FetchEvent) {
+        fmt.Printf("fetch idx=%d uid=%d flags=%v\n", e.MessageIndex, e.UID, e.Flags)
+    },
+}
+
+if err := m.StartIdle(handler); err != nil { panic(err) }
+// ... later, stop IDLE
+// _ = m.StopIdle()
+```
+
+## Reconnect Behavior
+
+When a command fails, the library closes the socket, reconnects, re‑authenticates (LOGIN or XOAUTH2), and restores the previously selected folder. You can tune retry count via `imap.RetryCount`.
+
+## TLS & Certificates
+
+Connections are TLS by default. For servers with self‑signed certs you can set `imap.TLSSkipVerify = true`, but be aware this disables certificate validation and can expose you to man‑in‑the‑middle attacks. Prefer real certificates in production.
+
+## Server Compatibility
+
+Tested against common providers such as Gmail and Office 365/Exchange. The client targets RFC 3501 and common extensions used for search, fetch, and move.
+
+## CI & Quality
+
+This repo runs Go 1.24+ on CI with vet and race‑enabled tests. We also track documentation on pkg.go.dev and Go Report Card.
+
+## Contributing
+
+Issues and PRs are welcome! If adding public APIs, please include short docs and examples. Make sure `go vet` and `go test -race ./...` pass locally.
+
+## License
+
+MIT © Brian Leishman
+
+---
+
+### Built With
+
+- [jhillyerd/enmime](https://github.com/jhillyerd/enmime) – MIME parsing
+- [logrusorgru/aurora](https://github.com/logrusorgru/aurora) – ANSI color output
+- [dustin/go-humanize](https://github.com/dustin/go-humanize) – Human‑friendly sizes
+
