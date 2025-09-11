@@ -262,7 +262,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		if Verbose {
 			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
 			if d != nil && d.conn != nil {
-				d.conn.Close()
+				_ = d.conn.Close()
 			}
 		}
 		return nil
@@ -276,7 +276,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		if Verbose {
 			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
 			if d != nil && d.conn != nil {
-				d.conn.Close()
+				_ = d.conn.Close()
 			}
 		}
 		return nil, err
@@ -288,7 +288,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		if Verbose {
 			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
 		}
-		d.Close()
+		_ = d.Close()
 		return nil, err
 	}
 
@@ -333,7 +333,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		if Verbose {
 			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
 			if d != nil && d.conn != nil {
-				d.conn.Close()
+				_ = d.conn.Close()
 			}
 		}
 		return nil
@@ -347,7 +347,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		if Verbose {
 			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
 			if d != nil && d.conn != nil {
-				d.conn.Close()
+				_ = d.conn.Close()
 			}
 		}
 		return nil, err
@@ -359,7 +359,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		if Verbose {
 			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
 		}
-		d.Close()
+		_ = d.Close()
 		return nil, err
 	}
 
@@ -421,13 +421,13 @@ func (d *Dialer) Reconnect() (err error) {
 	if d.useXOAUTH2 {
 		if err := d.Authenticate(d.Username, d.Password); err != nil {
 			// Best effort cleanup on failure
-			d.conn.Close()
+			_ = d.conn.Close()
 			d.Connected = false
 			return fmt.Errorf("imap reconnect auth xoauth2: %s", err)
 		}
 	} else {
 		if err := d.Login(d.Username, d.Password); err != nil {
-			d.conn.Close()
+			_ = d.conn.Close()
 			d.Connected = false
 			return fmt.Errorf("imap reconnect login: %s", err)
 		}
@@ -482,7 +482,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 		if Verbose {
-			log(d.ConnNum, d.Folder, strings.Replace(fmt.Sprintf("%s %s", aurora.Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`, -1))
+			log(d.ConnNum, d.Folder, strings.ReplaceAll(fmt.Sprintf("%s %s", aurora.Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`))
 		}
 
 		_, err = d.conn.Write([]byte(c))
@@ -560,7 +560,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		if Verbose {
 			log(d.ConnNum, d.Folder, aurora.Red(err))
 		}
-		d.Close()
+		_ = d.Close()
 		return nil
 	}, func() error {
 		return d.Reconnect()
@@ -694,7 +694,7 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 
 			select {
 			case <-ticker.C:
-				d.StopIdle()
+				_ = d.StopIdle()
 			case <-d.idleDone:
 				return
 			}
@@ -825,10 +825,7 @@ func (d *Dialer) GetTotalEmailCountStartingFrom(startFolder string) (count int, 
 // GetTotalEmailCountStartingFromExcluding returns the total number of emails in every folder
 // after the specified start folder, excluding the specified folders
 func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, excludedFolders []string) (count int, err error) {
-	started := true
-	if len(startFolder) != 0 {
-		started = false
-	}
+	started := len(startFolder) == 0
 
 	folder := d.Folder
 
@@ -908,11 +905,11 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(d.Folder)
 	}
 	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if readOnlyState {
-		d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(d.Folder)
 	}
 	if err != nil {
 		return err
@@ -929,11 +926,11 @@ func (d *Dialer) MarkSeen(uid int) (err error) {
 
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(d.Folder)
 	}
 	err = d.SetFlags(uid, flags)
 	if readOnlyState {
-		d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(d.Folder)
 	}
 
 	return err
@@ -1021,11 +1018,11 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(d.Folder)
 	}
 	_, err = d.Exec(query, true, RetryCount, nil)
 	if readOnlyState {
-		d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(d.Folder)
 	}
 
 	return err
@@ -1288,7 +1285,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 
 	emails = make(map[int]*Email, len(uids))
 	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
-		label = strings.Replace(label, "windows-", "cp", -1)
+		label = strings.ReplaceAll(label, "windows-", "cp")
 		encoding, _ := charset.Lookup(label)
 		return encoding.NewDecoder().Reader(input), nil
 	}
