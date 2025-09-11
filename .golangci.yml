@@ -1,13 +1,13 @@
+version: "2"
+
 run:
   timeout: 3m
   tests: false
 
 linters:
-  disable-all: true
   enable:
     - govet
     - staticcheck
-    - gosimple
     - ineffassign
     - unused
 
