@@ -59,19 +59,22 @@ var lastResp string
 
 // Dialer is basically an IMAP connection
 type Dialer struct {
-	conn      *tls.Conn
-	Folder    string
-	ReadOnly  bool
-	Username  string
-	Password  string
-	Host      string
-	Port      int
-	Connected bool
-	ConnNum   int
-	state     int
-	stateMu   sync.Mutex
-	idleStop  chan struct{}
-	idleDone  chan struct{}
+    conn      *tls.Conn
+    Folder    string
+    ReadOnly  bool
+    Username  string
+    Password  string
+    Host      string
+    Port      int
+    Connected bool
+    ConnNum   int
+    state     int
+    stateMu   sync.Mutex
+    idleStop  chan struct{}
+    idleDone  chan struct{}
+    // useXOAUTH2 indicates whether XOAUTH2 authentication should be used
+    // on (re)connection instead of LOGIN. It is set by NewWithOAuth2.
+    useXOAUTH2 bool
 }
 
 // EmailAddresses are a map of email address to names
@@ -242,15 +245,16 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 			}
 			return err
 		}
-		d = &Dialer{
-			conn:      conn,
-			Username:  username,
-			Password:  accessToken,
-			Host:      host,
-			Port:      port,
-			Connected: true,
-			ConnNum:   connNum,
-		}
+        d = &Dialer{
+            conn:      conn,
+            Username:  username,
+            Password:  accessToken,
+            Host:      host,
+            Port:      port,
+            Connected: true,
+            ConnNum:   connNum,
+            useXOAUTH2: true,
+        }
 
 		return d.Authenticate(username, accessToken)
 	}, RetryCount, func(err error) error {
@@ -302,15 +306,16 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 			}
 			return err
 		}
-		d = &Dialer{
-			conn:      conn,
-			Username:  username,
-			Password:  password,
-			Host:      host,
-			Port:      port,
-			Connected: true,
-			ConnNum:   connNum,
-		}
+        d = &Dialer{
+            conn:      conn,
+            Username:  username,
+            Password:  password,
+            Host:      host,
+            Port:      port,
+            Connected: true,
+            ConnNum:   connNum,
+            useXOAUTH2: false,
+        }
 
 		return d.Login(username, password)
 	}, RetryCount, func(err error) error {
@@ -343,12 +348,16 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 // Clone returns a new connection with the same connection information
 // as the one this is being called on
 func (d *Dialer) Clone() (d2 *Dialer, err error) {
-	d2, err = New(d.Username, d.Password, d.Host, d.Port)
-	// d2.Verbose = d1.Verbose
-	if d.Folder != "" {
-		if d.ReadOnly {
-			err = d2.ExamineFolder(d.Folder)
-		} else {
+    if d.useXOAUTH2 {
+        d2, err = NewWithOAuth2(d.Username, d.Password, d.Host, d.Port)
+    } else {
+        d2, err = New(d.Username, d.Password, d.Host, d.Port)
+    }
+    // d2.Verbose = d1.Verbose
+    if d.Folder != "" {
+        if d.ReadOnly {
+            err = d2.ExamineFolder(d.Folder)
+        } else {
 			err = d2.SelectFolder(d.Folder)
 		}
 		if err != nil {
@@ -375,15 +384,48 @@ func (d *Dialer) Close() (err error) {
 
 // Reconnect closes the current connection (if any) and establishes a new one
 func (d *Dialer) Reconnect() (err error) {
-	d.Close()
-	if Verbose {
-		log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
-	}
-	d.conn, err = dialHost(d.Host, d.Port)
-	if err != nil {
-		return fmt.Errorf("imap reconnect: %s", err)
-	}
-	return
+    d.Close()
+    if Verbose {
+        log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
+    }
+
+    conn, err := dialHost(d.Host, d.Port)
+    if err != nil {
+        return fmt.Errorf("imap reconnect dial: %s", err)
+    }
+    d.conn = conn
+    d.Connected = true
+
+    // Re-authenticate using the original method
+    if d.useXOAUTH2 {
+        if err := d.Authenticate(d.Username, d.Password); err != nil {
+            // Best effort cleanup on failure
+            d.conn.Close()
+            d.Connected = false
+            return fmt.Errorf("imap reconnect auth xoauth2: %s", err)
+        }
+    } else {
+        if err := d.Login(d.Username, d.Password); err != nil {
+            d.conn.Close()
+            d.Connected = false
+            return fmt.Errorf("imap reconnect login: %s", err)
+        }
+    }
+
+    // Restore selected folder state if any
+    if d.Folder != "" {
+        if d.ReadOnly {
+            if err := d.ExamineFolder(d.Folder); err != nil {
+                return fmt.Errorf("imap reconnect examine: %s", err)
+            }
+        } else {
+            if err := d.SelectFolder(d.Folder); err != nil {
+                return fmt.Errorf("imap reconnect select: %s", err)
+            }
+        }
+    }
+
+    return nil
 }
 
 const nl = "\r\n"
