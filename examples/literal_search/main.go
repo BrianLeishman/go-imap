@@ -18,7 +18,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// Select folder first
 	err = m.SelectFolder("INBOX")
@@ -47,7 +51,7 @@ func main() {
 		},
 		{
 			"Search for Japanese text 'テスト' (test) in subject",
-			`CHARSET UTF-8 Subject {12}` + "\r\n" + "テスト",
+			`CHARSET UTF-8 Subject {9}` + "\r\n" + "テスト",
 			"Japanese",
 		},
 		{
@@ -122,7 +126,7 @@ func main() {
 		"test":    "4 bytes (ASCII)",
 		"тест":    "8 bytes (Cyrillic)",
 		"测试":      "6 bytes (Chinese)",
-		"テスト":     "12 bytes (Japanese)",
+		"テスト":     "9 bytes (Japanese)",
 		"اختبار":  "12 bytes (Arabic)",
 		"😀👍":      "8 bytes (Emoji)",
 		"Prüfung": "8 bytes (German with umlaut)",

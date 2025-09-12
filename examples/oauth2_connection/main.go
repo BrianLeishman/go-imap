@@ -23,7 +23,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect with OAuth2: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// The OAuth2 connection works exactly like LOGIN after authentication
 	if err := m.SelectFolder("INBOX"); err != nil {

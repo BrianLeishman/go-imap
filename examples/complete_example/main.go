@@ -22,7 +22,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Connection failed: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// List folders
 	fmt.Println("\n📁 Available folders:")

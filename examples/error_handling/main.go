@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	imap "github.com/BrianLeishman/go-imap"
@@ -57,7 +58,11 @@ func handleConnectionErrors() {
 		fmt.Printf("Expected error occurred: %v\n", err)
 		fmt.Println("This is how you handle initial connection failures")
 	} else {
-		defer m.Close()
+		defer func() {
+			if err := m.Close(); err != nil {
+				log.Printf("Failed to close connection: %v", err)
+			}
+		}()
 		fmt.Println("Unexpected: connection succeeded with invalid credentials")
 	}
 
@@ -66,7 +71,11 @@ func handleConnectionErrors() {
 	if err != nil {
 		fmt.Printf("Expected error for invalid server: %v\n", err)
 	} else {
-		defer m.Close()
+		defer func() {
+			if err := m.Close(); err != nil {
+				log.Printf("Failed to close connection: %v", err)
+			}
+		}()
 	}
 
 	fmt.Println()
@@ -84,7 +93,11 @@ func robustEmailFetch() {
 		fmt.Println()
 		return
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// The library automatically handles reconnection for most operations
 	fmt.Println("Connected successfully!")
@@ -144,7 +157,11 @@ func manualReconnection() {
 		fmt.Println()
 		return
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	fmt.Println("Connected successfully!")
 
@@ -196,7 +213,11 @@ func timeoutConfiguration() {
 		fmt.Printf("Connection failed after %v: %v\n", elapsed, err)
 		fmt.Println("This demonstrates how DialTimeout works")
 	} else {
-		defer m.Close()
+		defer func() {
+			if err := m.Close(); err != nil {
+				log.Printf("Failed to close connection: %v", err)
+			}
+		}()
 
 		// This search will timeout after CommandTimeout
 		fmt.Println("Attempting a command that might timeout...")
@@ -224,39 +245,4 @@ func timeoutConfiguration() {
 	fmt.Println("5. Enable Verbose mode when debugging issues")
 	fmt.Println("6. Log errors for monitoring and debugging")
 	fmt.Println("7. Implement exponential backoff for custom retry logic")
-}
-
-// Example of custom retry logic with exponential backoff
-func customRetryLogic(m *imap.Dialer) error {
-	maxRetries := 3
-	baseDelay := time.Second
-
-	var lastErr error
-	for i := 0; i < maxRetries; i++ {
-		if i > 0 {
-			// Exponential backoff
-			delay := baseDelay * time.Duration(1<<uint(i-1))
-			fmt.Printf("Retry %d/%d after %v delay...\n", i+1, maxRetries, delay)
-			time.Sleep(delay)
-		}
-
-		// Try the operation
-		err := m.SelectFolder("INBOX")
-		if err == nil {
-			fmt.Println("Operation succeeded!")
-			return nil
-		}
-
-		lastErr = err
-		fmt.Printf("Attempt %d failed: %v\n", i+1, err)
-
-		// Try to reconnect before next retry
-		if i < maxRetries-1 {
-			if reconnectErr := m.Reconnect(); reconnectErr != nil {
-				fmt.Printf("Reconnection failed: %v\n", reconnectErr)
-			}
-		}
-	}
-
-	return fmt.Errorf("operation failed after %d retries: %w", maxRetries, lastErr)
 }

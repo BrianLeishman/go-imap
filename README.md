@@ -202,8 +202,8 @@ cyrillicUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {8}\r\nтест")
 // Search for Chinese text in subject (测试 = 6 bytes in UTF-8)  
 chineseUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {6}\r\n测试")
 
-// Search for Japanese text in body (テスト = 12 bytes in UTF-8)
-japaneseUIDs, _ := m.GetUIDs("CHARSET UTF-8 BODY {12}\r\nテスト")
+// Search for Japanese text in body (テスト = 9 bytes in UTF-8)
+japaneseUIDs, _ := m.GetUIDs("CHARSET UTF-8 BODY {9}\r\nテスト")
 
 // Search for Arabic text (اختبار = 12 bytes in UTF-8)
 arabicUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {12}\r\nاختبار")
