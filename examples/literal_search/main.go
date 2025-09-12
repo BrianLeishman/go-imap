@@ -2,6 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"strings"
+
+	imap "github.com/BrianLeishman/go-imap"
 )
 
 func main() {
@@ -9,101 +13,130 @@ func main() {
 	fmt.Println("This example demonstrates searching with non-ASCII characters using literal syntax")
 	fmt.Println()
 
-	// Example usage with literal syntax for UTF-8 characters
-	examples := []struct {
+	// Connect to server
+	m, err := imap.New("username", "password", "mail.server.com", 993)
+	if err != nil {
+		log.Fatalf("Failed to connect: %v", err)
+	}
+	defer m.Close()
+
+	// Select folder first
+	err = m.SelectFolder("INBOX")
+	if err != nil {
+		log.Fatalf("Failed to select INBOX: %v", err)
+	}
+
+	fmt.Println("Connected and selected INBOX successfully!")
+	fmt.Println()
+
+	// Example searches with literal syntax for various character sets
+	literalSearches := []struct {
 		description string
-		searchQuery string
+		query       string
+		language    string
 	}{
 		{
-			"Search for Cyrillic text in subject",
+			"Search for Cyrillic text 'тест' (test) in subject",
 			`CHARSET UTF-8 Subject {8}` + "\r\n" + "тест",
+			"Russian",
 		},
 		{
-			"Search for Chinese text in subject",
+			"Search for Chinese text '测试' (test) in subject",
 			`CHARSET UTF-8 Subject {6}` + "\r\n" + "测试",
+			"Chinese",
 		},
 		{
-			"Search for Japanese text in subject",
-			`CHARSET UTF-8 Subject {6}` + "\r\n" + "テスト",
+			"Search for Japanese text 'テスト' (test) in subject",
+			`CHARSET UTF-8 Subject {12}` + "\r\n" + "テスト",
+			"Japanese",
 		},
 		{
-			"Search for Arabic text in subject",
-			`CHARSET UTF-8 Subject {8}` + "\r\n" + "اختبار",
+			"Search for Arabic text 'اختبار' (test) in subject",
+			`CHARSET UTF-8 Subject {12}` + "\r\n" + "اختبار",
+			"Arabic",
 		},
 		{
-			"Search for emoji in body",
-			`CHARSET UTF-8 BODY {4}` + "\r\n" + "😀👍",
+			"Search for emoji '😀👍' in body text",
+			`CHARSET UTF-8 BODY {8}` + "\r\n" + "😀👍",
+			"Emoji",
+		},
+		{
+			"Search for German umlaut 'Prüfung' (test) in subject",
+			`CHARSET UTF-8 Subject {8}` + "\r\n" + "Prüfung",
+			"German",
 		},
 	}
 
-	fmt.Println("Example search queries with literal syntax:")
-	for i, example := range examples {
-		fmt.Printf("\n%d. %s:\n", i+1, example.description)
-		fmt.Printf("   Query: %q\n", example.searchQuery)
-
-		// Show the literal detection
-		if containsLiteralDemo(example.searchQuery) {
-			fmt.Printf("   ✅ Literal syntax detected - will use ExecWithLiteral\n")
-		} else {
-			fmt.Printf("   ℹ️  No literal syntax - will use regular Exec\n")
-		}
-	}
-
+	fmt.Println("=== Non-ASCII Searches Using Literal Syntax ===")
 	fmt.Println()
-	fmt.Println("To use this in your code:")
-	fmt.Printf(`
-// Connect to your IMAP server
-im, err := imap.New("username", "password", "mail.server.com", 993)
-if err != nil {
-    log.Fatal(err)
-}
-defer im.Close()
 
-// Select folder
-err = im.SelectFolder("INBOX")
-if err != nil {
-    log.Fatal(err)
-}
+	for i, search := range literalSearches {
+		fmt.Printf("%d. %s (%s)\n", i+1, search.description, search.language)
+		fmt.Printf("   Query: CHARSET UTF-8 Subject/BODY {n}\\r\\n<text>\n")
+		fmt.Printf("   Actual bytes: %d\n", len([]byte(search.query[strings.LastIndex(search.query, "\n")+1:])))
 
-// Search with literal syntax for non-ASCII characters
-uids, err := im.GetUIDs("CHARSET UTF-8 Subject {8}\r\nтест")
-if err != nil {
-    log.Fatal(err)
-}
-
-fmt.Printf("Found %%d emails matching Cyrillic 'тест'\n", len(uids))
-`)
-
-	fmt.Println("\nNote: The literal syntax {n} specifies the number of bytes in the following data.")
-	fmt.Println("This is crucial for non-ASCII characters which may use multiple bytes per character.")
-}
-
-// Simple demonstration function to show literal detection logic
-func containsLiteralDemo(command string) bool {
-	// Simple regex match for demo purposes
-	for i := 0; i < len(command)-1; i++ {
-		if command[i] == '{' {
-			for j := i + 1; j < len(command); j++ {
-				if command[j] == '}' {
-					// Check if what's between braces is a number
-					numStr := command[i+1 : j]
-					if len(numStr) > 0 {
-						// Simple digit check
-						allDigits := true
-						for _, c := range numStr {
-							if c < '0' || c > '9' {
-								allDigits = false
-								break
-							}
-						}
-						if allDigits {
-							return true
-						}
-					}
-					break
-				}
+		// Perform the search
+		uids, err := m.GetUIDs(search.query)
+		if err != nil {
+			fmt.Printf("   ❌ Search failed: %v\n", err)
+		} else if len(uids) == 0 {
+			fmt.Printf("   ℹ️  No emails found matching this criteria\n")
+		} else {
+			fmt.Printf("   ✅ Found %d email(s) with UIDs: %v\n", len(uids), uids[:min(len(uids), 5)])
+			if len(uids) > 5 {
+				fmt.Printf("   ... and %d more\n", len(uids)-5)
 			}
 		}
+		fmt.Println()
 	}
-	return false
+
+	// Compare with regular ASCII search
+	fmt.Println("=== Regular ASCII Search (for comparison) ===")
+	asciiSearches := []string{
+		`SUBJECT "test"`,
+		`BODY "hello"`,
+		`FROM "example.com"`,
+	}
+
+	for _, search := range asciiSearches {
+		fmt.Printf("Query: %s\n", search)
+		uids, err := m.GetUIDs(search)
+		if err != nil {
+			fmt.Printf("❌ Search failed: %v\n", err)
+		} else {
+			fmt.Printf("✅ Found %d email(s)\n", len(uids))
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("=== Key Points About Literal Syntax ===")
+	fmt.Println("• Use CHARSET UTF-8 for non-ASCII searches")
+	fmt.Println("• The {n} syntax specifies exact byte count (not character count!)")
+	fmt.Println("• UTF-8 characters may use 1-4 bytes per character")
+	fmt.Println("• The library automatically detects {n} syntax and handles the continuation protocol")
+	fmt.Println("• Backward compatibility: regular ASCII searches work unchanged")
+	fmt.Println()
+
+	fmt.Println("Example byte counts for different characters:")
+	examples := map[string]string{
+		"test":    "4 bytes (ASCII)",
+		"тест":    "8 bytes (Cyrillic)",
+		"测试":      "6 bytes (Chinese)",
+		"テスト":     "12 bytes (Japanese)",
+		"اختبار":  "12 bytes (Arabic)",
+		"😀👍":      "8 bytes (Emoji)",
+		"Prüfung": "8 bytes (German with umlaut)",
+	}
+
+	for text, info := range examples {
+		fmt.Printf("• '%s' = %s\n", text, info)
+	}
+}
+
+// Helper function for Go versions without min builtin
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
