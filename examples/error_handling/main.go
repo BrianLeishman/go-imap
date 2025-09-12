@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Error Handling and Reconnection Example ===\n")
+	fmt.Println("=== Error Handling and Reconnection Example ===")
 
 	// Configure retry and timeout behavior
 	configureLibrarySettings()
