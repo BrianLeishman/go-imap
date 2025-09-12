@@ -468,6 +468,213 @@ var atom = regexp.MustCompile(`{\d+}$`)
 // (?m) enables multi-line mode, so ^ matches the start of a line.
 var fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
 
+// Regex to find literal syntax {n} in commands
+var literalSyntaxRE = regexp.MustCompile(`\{(\d+)\}`)
+
+// containsLiteral checks if a command contains literal syntax
+func containsLiteral(command string) bool {
+	return literalSyntaxRE.MatchString(command)
+}
+
+// parseLiteralCommand parses a command with literal syntax and returns the command parts and literal data
+func parseLiteralCommand(command string) (commandPrefix string, literalData []byte, commandSuffix string, err error) {
+	matches := literalSyntaxRE.FindStringSubmatch(command)
+	if len(matches) < 2 {
+		return "", nil, "", fmt.Errorf("no literal syntax found in command")
+	}
+
+	literalSize, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return "", nil, "", fmt.Errorf("invalid literal size: %s", matches[1])
+	}
+
+	// Find the position of the literal syntax
+	literalStart := strings.Index(command, matches[0])
+	if literalStart == -1 {
+		return "", nil, "", fmt.Errorf("literal syntax not found")
+	}
+
+	// Extract command prefix (everything before {n})
+	commandPrefix = command[:literalStart]
+
+	// Extract literal data after the {n}\r\n part
+	afterLiteralSyntax := command[literalStart+len(matches[0]):]
+
+	// Skip \r\n if present
+	if strings.HasPrefix(afterLiteralSyntax, "\r\n") {
+		afterLiteralSyntax = afterLiteralSyntax[2:]
+	} else if strings.HasPrefix(afterLiteralSyntax, "\n") {
+		afterLiteralSyntax = afterLiteralSyntax[1:]
+	}
+
+	// Extract literal data
+	if len(afterLiteralSyntax) < literalSize {
+		return "", nil, "", fmt.Errorf("insufficient literal data: expected %d bytes, got %d", literalSize, len(afterLiteralSyntax))
+	}
+
+	literalData = []byte(afterLiteralSyntax[:literalSize])
+	commandSuffix = afterLiteralSyntax[literalSize:]
+
+	return commandPrefix, literalData, commandSuffix, nil
+}
+
+// ExecWithLiteral executes a command that contains literal syntax
+func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
+	var resp strings.Builder
+	err = retry.Retry(func() (err error) {
+		tag := []byte(fmt.Sprintf("%X", xid.New()))
+
+		if CommandTimeout != 0 {
+			_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+			defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
+		}
+
+		// Parse the literal command
+		commandPrefix, literalData, commandSuffix, err := parseLiteralCommand(command)
+		if err != nil {
+			return fmt.Errorf("failed to parse literal command: %w", err)
+		}
+
+		// Send the command prefix with literal syntax
+		initialCmd := fmt.Sprintf("%s %s{%d}\r\n", tag, commandPrefix, len(literalData))
+
+		if Verbose {
+			log(d.ConnNum, d.Folder, strings.ReplaceAll(fmt.Sprintf("%s %s", aurora.Bold("->"), strings.TrimSpace(initialCmd)), fmt.Sprintf(`"%s"`, d.Password), `"****"`))
+		}
+
+		_, err = d.conn.Write([]byte(initialCmd))
+		if err != nil {
+			return err
+		}
+
+		r := bufio.NewReader(d.conn)
+
+		// Wait for continuation response
+		var line []byte
+		line, err = r.ReadBytes('\n')
+		if err != nil {
+			return err
+		}
+
+		if Verbose && !SkipResponses {
+			log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
+		}
+
+		// Check for continuation response
+		if !bytes.HasPrefix(line, []byte("+ ")) {
+			return fmt.Errorf("expected continuation response, got: %s", string(line))
+		}
+
+		// Send the literal data
+		if Verbose {
+			log(d.ConnNum, d.Folder, fmt.Sprintf("%s %s", aurora.Bold("->"), string(literalData)))
+		}
+
+		_, err = d.conn.Write(literalData)
+		if err != nil {
+			return err
+		}
+
+		// Send command suffix if any
+		if commandSuffix != "" {
+			if Verbose {
+				log(d.ConnNum, d.Folder, fmt.Sprintf("%s %s", aurora.Bold("->"), commandSuffix))
+			}
+			_, err = d.conn.Write([]byte(commandSuffix))
+			if err != nil {
+				return err
+			}
+		}
+
+		// Send final CRLF
+		_, err = d.conn.Write([]byte("\r\n"))
+		if err != nil {
+			return err
+		}
+
+		// Process response similar to regular Exec
+		if buildResponse {
+			resp = strings.Builder{}
+		}
+
+		for err == nil {
+			line, err = r.ReadBytes('\n')
+			for {
+				if a := atom.Find(dropNl(line)); a != nil {
+					var n int
+					n, err = strconv.Atoi(string(a[1 : len(a)-1]))
+					if err != nil {
+						return err
+					}
+
+					buf := make([]byte, n)
+					_, err = io.ReadFull(r, buf)
+					if err != nil {
+						return err
+					}
+					line = append(line, buf...)
+
+					buf, err = r.ReadBytes('\n')
+					if err != nil {
+						return err
+					}
+					line = append(line, buf...)
+
+					continue
+				}
+				break
+			}
+
+			if Verbose && !SkipResponses {
+				log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
+			}
+
+			taglen := len(tag)
+			oklen := 3
+			if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
+				if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
+					err = fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
+					return err
+				}
+				break
+			}
+
+			if processLine != nil {
+				if err = processLine(line); err != nil {
+					return err
+				}
+			}
+			if buildResponse {
+				resp.Write(line)
+			}
+		}
+		return err
+	}, retryCount, func(err error) error {
+		if Verbose {
+			log(d.ConnNum, d.Folder, aurora.Red(err))
+		}
+		_ = d.Close()
+		return nil
+	}, func() error {
+		return d.Reconnect()
+	})
+	if err != nil {
+		if Verbose {
+			log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold("All retries failed")))
+		}
+		return "", err
+	}
+
+	if buildResponse {
+		if resp.Len() != 0 {
+			lastResp = resp.String()
+			return lastResp, nil
+		}
+		return "", nil
+	}
+	return response, err
+}
+
 // Exec executes the command on the imap connection
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
@@ -1049,7 +1256,15 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 }
 
 func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
-	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
+	command := `UID SEARCH ` + search
+
+	var r string
+	if containsLiteral(command) {
+		r, err = d.ExecWithLiteral(command, true, RetryCount, nil)
+	} else {
+		r, err = d.Exec(command, true, RetryCount, nil)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -1567,15 +1782,16 @@ func parseFetchTokens(r string) ([]*Token, error) {
 				tokenStart = i // tokenStart is now for the literal data itself
 
 				// Defensive boundary checks
-				if tokenStart >= len(r) { // Literal data is empty and we're at/past end of buffer
+				switch {
+				case tokenStart >= len(r): // Literal data is empty and we're at/past end of buffer
 					if sizeVal == 0 { // Correct for {0}
 						tokenEnd = tokenStart - 1 // Results in empty string for r[tokenStart:tokenEnd+1]
 					} else { // Error: sizeVal > 0 but no data
 						return nil, fmt.Errorf("TAtom: literal size %d but tokenStart %d is at/past end of buffer %d", sizeVal, tokenStart, len(r))
 					}
-				} else if tokenStart+sizeVal > len(r) { // Declared size is too large for available data
+				case tokenStart+sizeVal > len(r): // Declared size is too large for available data
 					tokenEnd = len(r) - 1 // Taking available data
-				} else { // Normal case: sizeVal fits
+				default: // Normal case: sizeVal fits
 					tokenEnd = tokenStart + sizeVal - 1
 				}
 
@@ -1584,8 +1800,7 @@ func parseFetchTokens(r string) ([]*Token, error) {
 			}
 		}
 
-		switch currentToken {
-		case TUnset: // If no token is being actively parsed
+		if currentToken == TUnset { // If no token is being actively parsed
 			switch {
 			case b == '"':
 				currentToken = TQuoted

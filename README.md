@@ -13,7 +13,7 @@ Works great with Gmail, Office 365/Exchange, and most RFC‑compliant IMAP serve
 - TLS connections and timeouts (`DialTimeout`, `CommandTimeout`)
 - Authentication via `LOGIN` and `XOAUTH2`
 - Folders: `SELECT`/`EXAMINE`, list folders
-- Search: `UID SEARCH` helpers
+- Search: `UID SEARCH` helpers with RFC 3501 literal syntax for non-ASCII text
 - Fetch: envelope, flags, size, text/HTML bodies, attachments
 - Mutations: move, set flags, delete + expunge
 - IMAP IDLE with event handlers for `EXISTS`, `EXPUNGE`, `FETCH`
@@ -91,6 +91,7 @@ go run examples/basic_connection/main.go
 **Working with Emails**
 - [`folders`](examples/folders/main.go) - List folders, select/examine folders, get email counts
 - [`search`](examples/search/main.go) - Search emails by various criteria (flags, dates, sender, size, etc.)
+- [`literal_search`](examples/literal_search/main.go) - Search with non-ASCII characters using RFC 3501 literal syntax
 - [`fetch_emails`](examples/fetch_emails/main.go) - Fetch email headers (fast) and full content with attachments (slower)
 - [`email_operations`](examples/email_operations/main.go) - Move emails, set/remove flags, delete and expunge
 
@@ -190,6 +191,29 @@ last10UIDs, _ := m.GetUIDs("*:10")     // Last 10 emails (reverse)
 // Size-based searches
 largeUIDs, _ := m.GetUIDs("LARGER 10485760")  // Emails larger than 10MB
 smallUIDs, _ := m.GetUIDs("SMALLER 1024")     // Emails smaller than 1KB
+
+// Non-ASCII searches using RFC 3501 literal syntax
+// The library automatically detects and handles literal syntax {n}
+// where n is the byte count of the following data
+
+// Search for Cyrillic text in subject (тест = 8 bytes in UTF-8)
+cyrillicUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {8}\r\nтест")
+
+// Search for Chinese text in subject (测试 = 6 bytes in UTF-8)  
+chineseUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {6}\r\n测试")
+
+// Search for Japanese text in body (テスト = 12 bytes in UTF-8)
+japaneseUIDs, _ := m.GetUIDs("CHARSET UTF-8 BODY {12}\r\nテスト")
+
+// Search for Arabic text (اختبار = 12 bytes in UTF-8)
+arabicUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {12}\r\nاختبار")
+
+// Search with emoji (😀👍 = 8 bytes in UTF-8)
+emojiUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {8}\r\n😀👍")
+
+// Note: Always specify CHARSET UTF-8 for non-ASCII searches
+// The {n} syntax tells the server exactly how many bytes to expect
+// This is crucial since Unicode characters use multiple bytes
 ```
 
 ### 3. Fetching Email Details
