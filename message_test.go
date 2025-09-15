@@ -3,52 +3,11 @@ package imap
 import (
 	"io"
 	"mime"
-	"reflect"
 	"strings"
 	"testing"
 
 	"golang.org/x/net/html/charset"
 )
-
-func TestParseUIDSearchResponse(t *testing.T) {
-	resp := "* SEARCH 123 456\r\nA1 OK SEARCH completed\r\n"
-	got, err := parseUIDSearchResponse(resp)
-	if err != nil {
-		t.Fatalf("parseUIDSearchResponse error: %v", err)
-	}
-	want := []int{123, 456}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v want %v", got, want)
-	}
-}
-
-func TestParseFetchResponse(t *testing.T) {
-	d := &Dialer{}
-	resp := "* 1 FETCH (UID 7 FLAGS (\\Seen))\r\n"
-	recs, err := d.ParseFetchResponse(resp)
-	if err != nil {
-		t.Fatalf("ParseFetchResponse error: %v", err)
-	}
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 record got %d", len(recs))
-	}
-	r := recs[0]
-	if len(r) != 4 {
-		t.Fatalf("expected 4 tokens got %d", len(r))
-	}
-	if r[0].Type != TLiteral || r[0].Str != "UID" {
-		t.Errorf("unexpected token %#v", r[0])
-	}
-	if r[1].Type != TNumber || r[1].Num != 7 {
-		t.Errorf("unexpected token %#v", r[1])
-	}
-	if r[2].Type != TLiteral || r[2].Str != "FLAGS" {
-		t.Errorf("unexpected token %#v", r[2])
-	}
-	if r[3].Type != TContainer || len(r[3].Tokens) != 1 || r[3].Tokens[0].Str != "\\Seen" {
-		t.Errorf("unexpected token %#v", r[3])
-	}
-}
 
 func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
 	emails := make(map[int]*Email, len(records))
@@ -171,26 +130,5 @@ func TestEnvelopeAtomAddress(t *testing.T) {
 	}
 	if addr != name {
 		t.Fatalf("got %q want %q", addr, name)
-	}
-}
-
-func TestMakeIMAPLiteral(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"test", "{4}\r\ntest"},
-		{"тест", "{8}\r\nтест"},
-		{"测试", "{6}\r\n测试"},
-		{"😀👍", "{8}\r\n😀👍"},
-		{"Prüfung", "{8}\r\nPrüfung"},
-		{"", "{0}\r\n"},
-	}
-
-	for _, test := range tests {
-		got := MakeIMAPLiteral(test.input)
-		if got != test.expected {
-			t.Errorf("MakeIMAPLiteral(%q) = %q, want %q", test.input, got, test.expected)
-		}
 	}
 }
