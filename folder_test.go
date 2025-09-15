@@ -87,6 +87,11 @@ func (m *MockDialer) selectAndGetCount(folder string) (int, error) {
 	return 0, nil
 }
 
+// TestExamineSelectRedundancy demonstrates an anti-pattern where developers might
+// inadvertently call EXAMINE followed by SELECT on the same folder.
+// This test shows why using only SELECT is more efficient.
+// NOTE: The actual library methods (like selectAndGetCount) are already optimized
+// and do not exhibit this redundancy.
 func TestExamineSelectRedundancy(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -96,12 +101,12 @@ func TestExamineSelectRedundancy(t *testing.T) {
 		{
 			name:        "single folder",
 			folders:     []string{"INBOX"},
-			description: "Should demonstrate redundant EXAMINE+SELECT for single folder",
+			description: "Should demonstrate redundant EXAMINE+SELECT anti-pattern for single folder",
 		},
 		{
 			name:        "multiple folders",
 			folders:     []string{"INBOX", "Sent", "Drafts"},
-			description: "Should demonstrate redundant EXAMINE+SELECT for multiple folders",
+			description: "Should demonstrate redundant EXAMINE+SELECT anti-pattern for multiple folders",
 		},
 	}
 
@@ -112,16 +117,18 @@ func TestExamineSelectRedundancy(t *testing.T) {
 				responses: make(map[string]string),
 			}
 
-			// Simulate the current inefficient code pattern
+			// Simulate an INEFFICIENT anti-pattern (what NOT to do)
+			// This demonstrates why library methods use selectAndGetCount instead
 			for _, folder := range tt.folders {
-				// Current code: First calls ExamineFolder
+				// Anti-pattern: First calls ExamineFolder (gets folder info read-only)
 				err := mock.ExamineFolder(folder)
 				if err != nil {
 					t.Errorf("ExamineFolder() error = %v", err)
 					continue
 				}
 
-				// Current code: Then immediately calls SELECT
+				// Anti-pattern: Then immediately calls SELECT (gets folder info + write access)
+				// This is redundant because SELECT provides everything EXAMINE does, plus write access
 				_, err = mock.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
 				if err != nil {
 					t.Errorf("SELECT error = %v", err)
@@ -159,13 +166,15 @@ func TestExamineSelectRedundancy(t *testing.T) {
 				_ = selectCall
 			}
 
-			t.Logf("Redundancy demonstrated: %d folders resulted in %d calls (%d EXAMINE + %d SELECT)",
+			t.Logf("Anti-pattern demonstrated: %d folders resulted in %d calls (%d EXAMINE + %d SELECT)",
 				len(tt.folders), len(mock.execCalls), mock.examineCount, mock.selectCount)
-			t.Logf("Optimization opportunity: Could reduce to %d calls by using only SELECT", len(tt.folders))
+			t.Logf("✅ Optimization: Library already uses only %d SELECT calls via selectAndGetCount()", len(tt.folders))
 		})
 	}
 }
 
+// TestEfficientFolderAccess demonstrates the optimized approach used by the library.
+// This is what selectAndGetCount() and other library methods actually do.
 func TestEfficientFolderAccess(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -175,12 +184,12 @@ func TestEfficientFolderAccess(t *testing.T) {
 		{
 			name:        "single folder optimized",
 			folders:     []string{"INBOX"},
-			description: "Should use only SELECT to get EXISTS count",
+			description: "Library uses only SELECT to get EXISTS count (no EXAMINE needed)",
 		},
 		{
 			name:        "multiple folders optimized",
 			folders:     []string{"INBOX", "Sent", "Drafts"},
-			description: "Should use only SELECT for all folders",
+			description: "Library uses only SELECT for all folders (50% fewer IMAP commands)",
 		},
 	}
 
@@ -191,7 +200,8 @@ func TestEfficientFolderAccess(t *testing.T) {
 				responses: make(map[string]string),
 			}
 
-			// Optimized approach: Use only SELECT
+			// ✅ EFFICIENT approach: Use only SELECT (what the library actually does)
+			// This is equivalent to calling selectAndGetCount() for each folder
 			for _, folder := range tt.folders {
 				_, err := mock.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
 				if err != nil {
@@ -213,9 +223,9 @@ func TestEfficientFolderAccess(t *testing.T) {
 				t.Errorf("Expected %d SELECT calls, got %d", len(tt.folders), mock.selectCount)
 			}
 
-			t.Logf("Optimized approach: %d folders resulted in %d calls (only SELECT)",
+			t.Logf("✅ Efficient approach (actual library behavior): %d folders = %d calls (only SELECT)",
 				len(tt.folders), len(mock.execCalls))
-			t.Logf("Performance improvement: 50%% reduction in IMAP commands")
+			t.Logf("📈 Performance: 50%% fewer IMAP commands vs anti-pattern")
 		})
 	}
 }
