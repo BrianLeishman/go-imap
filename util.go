@@ -8,7 +8,7 @@ import (
 )
 
 // log outputs a formatted message with timestamp and connection info
-func log(connNum int, folder string, msg interface{}) {
+func log(connNum int, folder string, msg any) {
 	var name string
 	if len(folder) != 0 {
 		name = fmt.Sprintf("IMAP%d:%s", connNum, folder)

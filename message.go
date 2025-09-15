@@ -2,6 +2,8 @@ package imap
 
 import (
 	"fmt"
+	"io"
+	"mime"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	humanize "github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime"
 	"github.com/logrusorgru/aurora"
+	"golang.org/x/net/html/charset"
 )
 
 // EmailAddresses represents a map of email addresses to display names
@@ -517,6 +520,82 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 					return nil, err
 				}
 				e.Size = uint64(tks[i+1].Num)
+				skip++
+			case "ENVELOPE":
+				CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
+					label = strings.ReplaceAll(label, "windows-", "cp")
+					encoding, _ := charset.Lookup(label)
+					return encoding.NewDecoder().Reader(input), nil
+				}
+				dec := mime.WordDecoder{CharsetReader: CharsetReader}
+
+				if err = d.CheckType(tks[i+1], []TType{TContainer}, tks, "after ENVELOPE"); err != nil {
+					return nil, err
+				}
+				if err = d.CheckType(tks[i+1].Tokens[EDate], []TType{TQuoted, TNil}, tks, "for ENVELOPE[%d]", EDate); err != nil {
+					return nil, err
+				}
+				if err = d.CheckType(tks[i+1].Tokens[ESubject], []TType{TQuoted, TAtom, TNil}, tks, "for ENVELOPE[%d]", ESubject); err != nil {
+					return nil, err
+				}
+
+				e.Sent, _ = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", tks[i+1].Tokens[EDate].Str)
+				e.Sent = e.Sent.UTC()
+
+				e.Subject, err = dec.DecodeHeader(tks[i+1].Tokens[ESubject].Str)
+				if err != nil {
+					return nil, err
+				}
+
+				for _, a := range []struct {
+					dest  *EmailAddresses
+					pos   uint8
+					debug string
+				}{
+					{&e.From, EFrom, "FROM"},
+					{&e.ReplyTo, EReplyTo, "REPLYTO"},
+					{&e.To, ETo, "TO"},
+					{&e.CC, ECC, "CC"},
+					{&e.BCC, EBCC, "BCC"},
+				} {
+					if tks[i+1].Tokens[a.pos].Type != TNil {
+						if err = d.CheckType(tks[i+1].Tokens[a.pos], []TType{TNil, TContainer}, tks, "for ENVELOPE[%d]", a.pos); err != nil {
+							return nil, err
+						}
+						*a.dest = make(map[string]string, len(tks[i+1].Tokens[a.pos].Tokens))
+						for i, t := range tks[i+1].Tokens[a.pos].Tokens {
+							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
+								return nil, err
+							}
+							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
+								return nil, err
+							}
+							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
+								return nil, err
+							}
+
+							name, err := dec.DecodeHeader(t.Tokens[EEName].Str)
+							if err != nil {
+								return nil, err
+							}
+
+							mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
+							if err != nil {
+								return nil, err
+							}
+
+							host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
+							if err != nil {
+								return nil, err
+							}
+
+							(*a.dest)[strings.ToLower(mailbox+"@"+host)] = name
+						}
+					}
+				}
+
+				e.MessageID = tks[i+1].Tokens[EMessageID].Str
+
 				skip++
 			case "UID":
 				if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {

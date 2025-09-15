@@ -75,6 +75,25 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 	return nil
 }
 
+// selectAndGetCount executes SELECT command and extracts message count from EXISTS response
+func (d *Dialer) selectAndGetCount(folder string) (int, error) {
+	r, err := d.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	// Parse EXISTS response for message count
+	re := regexp.MustCompile(`\* (\d+) EXISTS`)
+	matches := re.FindStringSubmatch(r)
+	if len(matches) > 1 {
+		if count, parseErr := strconv.Atoi(matches[1]); parseErr == nil {
+			return count, nil
+		}
+	}
+
+	return 0, nil
+}
+
 // GetTotalEmailCount returns the total email count across all folders
 func (d *Dialer) GetTotalEmailCount() (count int, err error) {
 	return d.GetTotalEmailCountStartingFromExcluding("", nil)
@@ -149,20 +168,9 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 			continue
 		}
 
-		if err = d.ExamineFolder(folder); err != nil {
-			continue
-		}
-
-		folderCount := 0
-		r, err := d.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+		folderCount, err := d.selectAndGetCount(folder)
 		if err == nil {
-			re := regexp.MustCompile(`\* (\d+) EXISTS`)
-			matches := re.FindStringSubmatch(r)
-			if len(matches) > 1 {
-				if folderCount, err = strconv.Atoi(matches[1]); err == nil {
-					count += folderCount
-				}
-			}
+			count += folderCount
 		}
 	}
 
@@ -207,27 +215,12 @@ func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string,
 			continue
 		}
 
-		if err := d.ExamineFolder(folder); err != nil {
-			folderErrors = append(folderErrors, fmt.Errorf("folder %s: %w", folder, err))
-			continue
-		}
-
-		folderCount := 0
-		r, folderErr := d.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+		folderCount, folderErr := d.selectAndGetCount(folder)
 		if folderErr != nil {
 			folderErrors = append(folderErrors, fmt.Errorf("folder %s: %w", folder, folderErr))
 			continue
 		}
-
-		re := regexp.MustCompile(`\* (\d+) EXISTS`)
-		matches := re.FindStringSubmatch(r)
-		if len(matches) > 1 {
-			if folderCount, folderErr = strconv.Atoi(matches[1]); folderErr != nil {
-				folderErrors = append(folderErrors, fmt.Errorf("folder %s: %w", folder, folderErr))
-				continue
-			}
-			count += folderCount
-		}
+		count += folderCount
 	}
 
 	// Restore original folder state
@@ -275,28 +268,14 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 
 		stat := FolderStats{Name: folder}
 
-		if err := d.ExamineFolder(folder); err != nil {
-			stat.Error = err
-			stats = append(stats, stat)
-			continue
-		}
-
-		// Get message count and max UID
-		r, err := d.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+		// Get message count using helper function
+		count, err := d.selectAndGetCount(folder)
 		if err != nil {
 			stat.Error = err
 			stats = append(stats, stat)
 			continue
 		}
-
-		// Parse EXISTS response for message count
-		re := regexp.MustCompile(`\* (\d+) EXISTS`)
-		matches := re.FindStringSubmatch(r)
-		if len(matches) > 1 {
-			if count, err := strconv.Atoi(matches[1]); err == nil {
-				stat.Count = count
-			}
-		}
+		stat.Count = count
 
 		// Get highest UID
 		if stat.Count > 0 {

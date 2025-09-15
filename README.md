@@ -85,18 +85,21 @@ go run examples/basic_connection/main.go
 
 ### Available Examples
 
-**Getting Started**
+#### Getting Started
+
 - [`basic_connection`](examples/basic_connection/main.go) - Basic LOGIN authentication and connection setup
 - [`oauth2_connection`](examples/oauth2_connection/main.go) - OAuth 2.0 (XOAUTH2) authentication for Gmail/Office 365
 
-**Working with Emails**
+#### Working with Emails
+
 - [`folders`](examples/folders/main.go) - List folders, select/examine folders, get email counts
 - [`search`](examples/search/main.go) - Search emails by various criteria (flags, dates, sender, size, etc.)
 - [`literal_search`](examples/literal_search/main.go) - Search with non-ASCII characters using RFC 3501 literal syntax
 - [`fetch_emails`](examples/fetch_emails/main.go) - Fetch email headers (fast) and full content with attachments (slower)
 - [`email_operations`](examples/email_operations/main.go) - Move emails, set/remove flags, delete and expunge
 
-**Advanced Features**
+#### Advanced Features
+
 - [`idle_monitoring`](examples/idle_monitoring/main.go) - Real-time email notifications with IDLE
 - [`error_handling`](examples/error_handling/main.go) - Robust error handling, reconnection, and timeout configuration
 - [`complete_example`](examples/complete_example/main.go) - Full-featured example combining multiple operations

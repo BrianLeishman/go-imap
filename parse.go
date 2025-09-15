@@ -41,6 +41,21 @@ const (
 
 type tokenContainer *[]*Token
 
+// calculateTokenEnd calculates the end position of a literal token based on size and buffer constraints
+func calculateTokenEnd(tokenStart, sizeVal, bufferLen int) (int, error) {
+	switch {
+	case tokenStart >= bufferLen:
+		if sizeVal == 0 {
+			return tokenStart - 1, nil // Results in empty string for r[tokenStart:tokenEnd+1]
+		}
+		return 0, fmt.Errorf("TAtom: literal size %d but tokenStart %d is at/past end of buffer %d", sizeVal, tokenStart, bufferLen)
+	case tokenStart+sizeVal > bufferLen:
+		return bufferLen - 1, nil // Taking available data
+	default:
+		return tokenStart + sizeVal - 1, nil // Normal case: sizeVal fits
+	}
+}
+
 // parseFetchTokens parses IMAP FETCH response tokens
 func parseFetchTokens(r string) ([]*Token, error) {
 	tokens := make([]*Token, 0)
@@ -146,18 +161,10 @@ func parseFetchTokens(r string) ([]*Token, error) {
 
 				tokenStart = i // tokenStart is now for the literal data itself
 
-				// Defensive boundary checks
-				switch {
-				case tokenStart >= len(r): // Literal data is empty and we're at/past end of buffer
-					if sizeVal == 0 { // Correct for {0}
-						tokenEnd = tokenStart - 1 // Results in empty string for r[tokenStart:tokenEnd+1]
-					} else { // Error: sizeVal > 0 but no data
-						return nil, fmt.Errorf("TAtom: literal size %d but tokenStart %d is at/past end of buffer %d", sizeVal, tokenStart, len(r))
-					}
-				case tokenStart+sizeVal > len(r): // Declared size is too large for available data
-					tokenEnd = len(r) - 1 // Taking available data
-				default: // Normal case: sizeVal fits
-					tokenEnd = tokenStart + sizeVal - 1
+				// Calculate token end position with boundary checks
+				tokenEnd, err = calculateTokenEnd(tokenStart, sizeVal, len(r))
+				if err != nil {
+					return nil, err
 				}
 
 				i = tokenEnd // Move main loop cursor to the end of the literal data
