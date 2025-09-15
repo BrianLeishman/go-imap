@@ -1085,6 +1085,191 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	return count, err
 }
 
+// FolderStats contains information about a single folder
+type FolderStats struct {
+	Name   string
+	Count  int
+	MaxUID int
+	Error  error
+}
+
+// GetTotalEmailCountSafe returns the total number of emails in every folder,
+// continuing even when some folders cannot be examined
+func (d *Dialer) GetTotalEmailCountSafe() (count int, folderErrors []error, err error) {
+	return d.GetTotalEmailCountSafeStartingFromExcluding("", nil)
+}
+
+// GetTotalEmailCountSafeExcluding returns the total number of emails in every folder
+// excluding the specified folders, continuing even when some folders cannot be examined
+func (d *Dialer) GetTotalEmailCountSafeExcluding(excludedFolders []string) (count int, folderErrors []error, err error) {
+	return d.GetTotalEmailCountSafeStartingFromExcluding("", excludedFolders)
+}
+
+// GetTotalEmailCountSafeStartingFrom returns the total number of emails in every folder
+// after the specified start folder, continuing even when some folders cannot be examined
+func (d *Dialer) GetTotalEmailCountSafeStartingFrom(startFolder string) (count int, folderErrors []error, err error) {
+	return d.GetTotalEmailCountSafeStartingFromExcluding(startFolder, nil)
+}
+
+// GetTotalEmailCountSafeStartingFromExcluding returns the total number of emails in every folder
+// after the specified start folder, excluding the specified folders, continuing even when some folders cannot be examined
+func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string, excludedFolders []string) (count int, folderErrors []error, err error) {
+	started := len(startFolder) == 0
+
+	folder := d.Folder
+
+	folders, err := d.GetFolders()
+	if err != nil {
+		return count, folderErrors, err
+	}
+
+	for _, f := range folders {
+		if !started {
+			if f == startFolder {
+				started = true
+			} else {
+				continue
+			}
+		}
+
+		skip := false
+		for _, ef := range excludedFolders {
+			if f == ef {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		err = d.ExamineFolder(f)
+		if err != nil {
+			// Collect the error but continue processing other folders
+			folderErrors = append(folderErrors, fmt.Errorf("folder %q: %w", f, err))
+			continue
+		}
+
+		var n int
+		n, err = strconv.Atoi(regexExists.FindStringSubmatch(lastResp)[1])
+		if err != nil {
+			// Collect the error but continue processing other folders
+			folderErrors = append(folderErrors, fmt.Errorf("folder %q: failed to parse EXISTS response: %w", f, err))
+			continue
+		}
+
+		count += n
+	}
+
+	if len(folder) != 0 {
+		err = d.ExamineFolder(folder)
+		if err != nil {
+			return count, folderErrors, err
+		}
+	}
+
+	return count, folderErrors, nil
+}
+
+// GetFolderStats returns detailed statistics for all folders
+func (d *Dialer) GetFolderStats() ([]FolderStats, error) {
+	return d.GetFolderStatsStartingFromExcluding("", nil)
+}
+
+// GetFolderStatsExcluding returns detailed statistics for all folders excluding the specified ones
+func (d *Dialer) GetFolderStatsExcluding(excludedFolders []string) ([]FolderStats, error) {
+	return d.GetFolderStatsStartingFromExcluding("", excludedFolders)
+}
+
+// GetFolderStatsStartingFrom returns detailed statistics for all folders after the specified start folder
+func (d *Dialer) GetFolderStatsStartingFrom(startFolder string) ([]FolderStats, error) {
+	return d.GetFolderStatsStartingFromExcluding(startFolder, nil)
+}
+
+// GetFolderStatsStartingFromExcluding returns detailed statistics for all folders
+// after the specified start folder, excluding the specified folders
+func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, excludedFolders []string) ([]FolderStats, error) {
+	started := len(startFolder) == 0
+	originalFolder := d.Folder
+
+	folders, err := d.GetFolders()
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []FolderStats
+
+	for _, f := range folders {
+		if !started {
+			if f == startFolder {
+				started = true
+			} else {
+				continue
+			}
+		}
+
+		skip := false
+		for _, ef := range excludedFolders {
+			if f == ef {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		stat := FolderStats{Name: f}
+
+		err = d.ExamineFolder(f)
+		if err != nil {
+			stat.Error = err
+			stats = append(stats, stat)
+			continue
+		}
+
+		// Get email count from EXISTS response
+		match := regexExists.FindStringSubmatch(lastResp)
+		if len(match) > 1 {
+			var n int
+			n, err = strconv.Atoi(match[1])
+			if err != nil {
+				stat.Error = fmt.Errorf("failed to parse EXISTS response: %w", err)
+				stats = append(stats, stat)
+				continue
+			}
+			stat.Count = n
+		}
+
+		// Get max UID by searching for all UIDs
+		uids, err := d.GetUIDs("ALL")
+		if err != nil {
+			stat.Error = fmt.Errorf("failed to get UIDs: %w", err)
+		} else if len(uids) > 0 {
+			// Find the maximum UID
+			maxUID := uids[0]
+			for _, uid := range uids {
+				if uid > maxUID {
+					maxUID = uid
+				}
+			}
+			stat.MaxUID = maxUID
+		}
+
+		stats = append(stats, stat)
+	}
+
+	// Restore original folder if it was set
+	if len(originalFolder) != 0 {
+		err = d.ExamineFolder(originalFolder)
+		if err != nil {
+			return stats, err
+		}
+	}
+
+	return stats, nil
+}
+
 // ExamineFolder selects a folder
 func (d *Dialer) ExamineFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
