@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-	// Configure timeouts
 	imap.DialTimeout = 10 * time.Second
 	imap.CommandTimeout = 30 * time.Second
 
@@ -34,7 +33,6 @@ func main() {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
 
-	// Get unread count
 	unreadUIDs, err := m.GetUIDs("UNSEEN")
 	if err != nil {
 		log.Fatalf("Failed to search for unread emails: %v", err)

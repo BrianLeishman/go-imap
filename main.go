@@ -26,10 +26,8 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-// AddSlashes adds slashes to double quotes
 var AddSlashes = strings.NewReplacer(`"`, `\"`)
 
-// RemoveSlashes removes slashes before double quotes
 var RemoveSlashes = strings.NewReplacer(`\"`, `"`)
 
 // Verbose outputs every command and its response with the IMAP server
@@ -38,7 +36,6 @@ var Verbose = false
 // SkipResponses skips printing server responses in verbose mode
 var SkipResponses = false
 
-// RetryCount is the number of times retired functions get retried
 var RetryCount = 10
 
 // DialTimeout defines how long to wait when establishing a new connection.
@@ -56,7 +53,6 @@ var TLSSkipVerify bool
 
 var lastResp string
 
-// Dialer is basically an IMAP connection
 type Dialer struct {
 	conn      *tls.Conn
 	Folder    string
@@ -76,10 +72,8 @@ type Dialer struct {
 	useXOAUTH2 bool
 }
 
-// EmailAddresses are a map of email address to names
 type EmailAddresses map[string]string
 
-// Email is an email message
 type Email struct {
 	Flags       []string
 	Received    time.Time
@@ -107,7 +101,6 @@ const (
 	StateStoppingIdle
 )
 
-// Attachment is an Email attachment
 type Attachment struct {
 	Name     string
 	MimeType string
@@ -224,7 +217,6 @@ func dialHost(host string, port int) (*tls.Conn, error) {
 	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), cfg)
 }
 
-// NewWithOAuth2 makes a new imap with OAuth2
 func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
 	nextConnNumMutex.RLock()
 	connNum := nextConnNum
@@ -295,7 +287,6 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 	return d, nil
 }
 
-// New makes a new imap
 func New(username string, password string, host string, port int) (d *Dialer, err error) {
 	nextConnNumMutex.RLock()
 	connNum := nextConnNum
@@ -366,8 +357,6 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	return d, nil
 }
 
-// Clone returns a new connection with the same connection information
-// as the one this is being called on
 func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	if d.useXOAUTH2 {
 		d2, err = NewWithOAuth2(d.Username, d.Password, d.Host, d.Port)
@@ -388,7 +377,6 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 	return d2, err
 }
 
-// Close closes the imap connection
 func (d *Dialer) Close() (err error) {
 	if d.Connected {
 		if Verbose {
@@ -403,7 +391,6 @@ func (d *Dialer) Close() (err error) {
 	return err
 }
 
-// Reconnect closes the current connection (if any) and establishes a new one
 func (d *Dialer) Reconnect() (err error) {
 	_ = d.Close()
 	if Verbose {
@@ -464,19 +451,14 @@ func dropNl(b []byte) []byte {
 
 var atom = regexp.MustCompile(`{\d+}$`)
 
-// Regex to find the start of each "* N FETCH" line in a potentially multi-line response.
-// (?m) enables multi-line mode, so ^ matches the start of a line.
 var fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
 
-// Regex to find literal syntax {n} in commands
 var literalSyntaxRE = regexp.MustCompile(`\{(\d+)\}`)
 
-// containsLiteral checks if a command contains literal syntax
 func containsLiteral(command string) bool {
 	return literalSyntaxRE.MatchString(command)
 }
 
-// parseLiteralCommand parses a command with literal syntax and returns the command parts and literal data
 func parseLiteralCommand(command string) (commandPrefix string, literalData []byte, commandSuffix string, err error) {
 	matches := literalSyntaxRE.FindStringSubmatch(command)
 	if len(matches) < 2 {
@@ -488,26 +470,21 @@ func parseLiteralCommand(command string) (commandPrefix string, literalData []by
 		return "", nil, "", fmt.Errorf("invalid literal size: %s", matches[1])
 	}
 
-	// Find the position of the literal syntax
 	literalStart := strings.Index(command, matches[0])
 	if literalStart == -1 {
 		return "", nil, "", fmt.Errorf("literal syntax not found")
 	}
 
-	// Extract command prefix (everything before {n})
 	commandPrefix = command[:literalStart]
 
-	// Extract literal data after the {n}\r\n part
 	afterLiteralSyntax := command[literalStart+len(matches[0]):]
 
-	// Skip \r\n if present
 	if strings.HasPrefix(afterLiteralSyntax, "\r\n") {
 		afterLiteralSyntax = afterLiteralSyntax[2:]
 	} else if strings.HasPrefix(afterLiteralSyntax, "\n") {
 		afterLiteralSyntax = afterLiteralSyntax[1:]
 	}
 
-	// Extract literal data
 	if len(afterLiteralSyntax) < literalSize {
 		return "", nil, "", fmt.Errorf("insufficient literal data: expected %d bytes, got %d", literalSize, len(afterLiteralSyntax))
 	}
@@ -518,7 +495,6 @@ func parseLiteralCommand(command string) (commandPrefix string, literalData []by
 	return commandPrefix, literalData, commandSuffix, nil
 }
 
-// ExecWithLiteral executes a command that contains literal syntax
 func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
@@ -529,13 +505,11 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 			defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
 		}
 
-		// Parse the literal command
 		commandPrefix, literalData, commandSuffix, err := parseLiteralCommand(command)
 		if err != nil {
 			return fmt.Errorf("failed to parse literal command: %w", err)
 		}
 
-		// Send the command prefix with literal syntax
 		initialCmd := fmt.Sprintf("%s %s{%d}\r\n", tag, commandPrefix, len(literalData))
 
 		if Verbose {
@@ -549,7 +523,6 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 
 		r := bufio.NewReader(d.conn)
 
-		// Wait for continuation response
 		var line []byte
 		line, err = r.ReadBytes('\n')
 		if err != nil {
@@ -560,12 +533,10 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 			log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
 		}
 
-		// Check for continuation response
 		if !bytes.HasPrefix(line, []byte("+ ")) {
 			return fmt.Errorf("expected continuation response, got: %s", string(line))
 		}
 
-		// Send the literal data
 		if Verbose {
 			log(d.ConnNum, d.Folder, fmt.Sprintf("%s %s", aurora.Bold("->"), string(literalData)))
 		}
@@ -575,7 +546,6 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 			return err
 		}
 
-		// Send command suffix if any
 		if commandSuffix != "" {
 			if Verbose {
 				log(d.ConnNum, d.Folder, fmt.Sprintf("%s %s", aurora.Bold("->"), commandSuffix))
@@ -586,13 +556,11 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 			}
 		}
 
-		// Send final CRLF
 		_, err = d.conn.Write([]byte("\r\n"))
 		if err != nil {
 			return err
 		}
 
-		// Process response similar to regular Exec
 		if buildResponse {
 			resp = strings.Builder{}
 		}
@@ -675,7 +643,6 @@ func (d *Dialer) ExecWithLiteral(command string, buildResponse bool, retryCount 
 	return response, err
 }
 
-// Exec executes the command on the imap connection
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
@@ -796,14 +763,12 @@ func (d *Dialer) Authenticate(user string, accessToken string) (err error) {
 	return err
 }
 
-// Login attempts to login
 func (d *Dialer) Login(username string, password string) (err error) {
 	// Don't retry authentication - auth failures should not trigger reconnection
 	_, err = d.Exec(fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, 0, nil)
 	return err
 }
 
-// GetFolders returns all folders
 func (d *Dialer) GetFolders() (folders []string, err error) {
 	folders = make([]string, 0)
 	_, err = d.Exec(`LIST "" "*"`, false, RetryCount, func(line []byte) (err error) {
@@ -1012,25 +977,18 @@ func (d *Dialer) State() int {
 
 var regexExists = regexp.MustCompile(`\*\s+(\d+)\s+EXISTS`)
 
-// GetTotalEmailCount returns the total number of emails in every folder
 func (d *Dialer) GetTotalEmailCount() (count int, err error) {
 	return d.GetTotalEmailCountStartingFromExcluding("", nil)
 }
 
-// GetTotalEmailCountExcluding returns the total number of emails in every folder
-// excluding the specified folders
 func (d *Dialer) GetTotalEmailCountExcluding(excludedFolders []string) (count int, err error) {
 	return d.GetTotalEmailCountStartingFromExcluding("", excludedFolders)
 }
 
-// GetTotalEmailCountStartingFrom returns the total number of emails in every folder
-// after the specified start folder
 func (d *Dialer) GetTotalEmailCountStartingFrom(startFolder string) (count int, err error) {
 	return d.GetTotalEmailCountStartingFromExcluding(startFolder, nil)
 }
 
-// GetTotalEmailCountStartingFromExcluding returns the total number of emails in every folder
-// after the specified start folder, excluding the specified folders
 func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, excludedFolders []string) (count int, err error) {
 	started := len(startFolder) == 0
 
@@ -1085,7 +1043,6 @@ func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, exc
 	return count, err
 }
 
-// FolderStats contains information about a single folder
 type FolderStats struct {
 	Name   string
 	Count  int
@@ -1093,26 +1050,18 @@ type FolderStats struct {
 	Error  error
 }
 
-// GetTotalEmailCountSafe returns the total number of emails in every folder,
-// continuing even when some folders cannot be examined
 func (d *Dialer) GetTotalEmailCountSafe() (count int, folderErrors []error, err error) {
 	return d.GetTotalEmailCountSafeStartingFromExcluding("", nil)
 }
 
-// GetTotalEmailCountSafeExcluding returns the total number of emails in every folder
-// excluding the specified folders, continuing even when some folders cannot be examined
 func (d *Dialer) GetTotalEmailCountSafeExcluding(excludedFolders []string) (count int, folderErrors []error, err error) {
 	return d.GetTotalEmailCountSafeStartingFromExcluding("", excludedFolders)
 }
 
-// GetTotalEmailCountSafeStartingFrom returns the total number of emails in every folder
-// after the specified start folder, continuing even when some folders cannot be examined
 func (d *Dialer) GetTotalEmailCountSafeStartingFrom(startFolder string) (count int, folderErrors []error, err error) {
 	return d.GetTotalEmailCountSafeStartingFromExcluding(startFolder, nil)
 }
 
-// GetTotalEmailCountSafeStartingFromExcluding returns the total number of emails in every folder
-// after the specified start folder, excluding the specified folders, continuing even when some folders cannot be examined
 func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string, excludedFolders []string) (count int, folderErrors []error, err error) {
 	started := len(startFolder) == 0
 
@@ -1171,23 +1120,18 @@ func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string,
 	return count, folderErrors, nil
 }
 
-// GetFolderStats returns detailed statistics for all folders
 func (d *Dialer) GetFolderStats() ([]FolderStats, error) {
 	return d.GetFolderStatsStartingFromExcluding("", nil)
 }
 
-// GetFolderStatsExcluding returns detailed statistics for all folders excluding the specified ones
 func (d *Dialer) GetFolderStatsExcluding(excludedFolders []string) ([]FolderStats, error) {
 	return d.GetFolderStatsStartingFromExcluding("", excludedFolders)
 }
 
-// GetFolderStatsStartingFrom returns detailed statistics for all folders after the specified start folder
 func (d *Dialer) GetFolderStatsStartingFrom(startFolder string) ([]FolderStats, error) {
 	return d.GetFolderStatsStartingFromExcluding(startFolder, nil)
 }
 
-// GetFolderStatsStartingFromExcluding returns detailed statistics for all folders
-// after the specified start folder, excluding the specified folders
 func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, excludedFolders []string) ([]FolderStats, error) {
 	started := len(startFolder) == 0
 	originalFolder := d.Folder
@@ -1228,7 +1172,6 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 			continue
 		}
 
-		// Get email count from EXISTS response
 		match := regexExists.FindStringSubmatch(lastResp)
 		if len(match) > 1 {
 			var n int
@@ -1241,7 +1184,6 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 			stat.Count = n
 		}
 
-		// Get max UID by searching for all UIDs
 		uids, err := d.GetUIDs("ALL")
 		if err != nil {
 			stat.Error = fmt.Errorf("failed to get UIDs: %w", err)
@@ -1270,7 +1212,6 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 	return stats, nil
 }
 
-// ExamineFolder selects a folder
 func (d *Dialer) ExamineFolder(folder string) (err error) {
 	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
@@ -1281,7 +1222,6 @@ func (d *Dialer) ExamineFolder(folder string) (err error) {
 	return nil
 }
 
-// SelectFolder selects a folder
 func (d *Dialer) SelectFolder(folder string) (err error) {
 	_, err = d.Exec(`SELECT "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
@@ -1292,7 +1232,6 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 	return nil
 }
 
-// Move a read email to a specified folder
 func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
@@ -1310,7 +1249,6 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	return nil
 }
 
-// mark an emai as seen
 func (d *Dialer) MarkSeen(uid int) (err error) {
 	flags := Flags{
 		Seen: FlagAdd,
@@ -1328,7 +1266,6 @@ func (d *Dialer) MarkSeen(uid int) (err error) {
 	return err
 }
 
-// DeleteEmail marks an email as deleted
 func (d *Dialer) DeleteEmail(uid int) (err error) {
 	flags := Flags{
 		Deleted: FlagAdd,
@@ -1350,7 +1287,6 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 	return err
 }
 
-// Expunge permanently removes messages marked as deleted in the current folder
 func (d *Dialer) Expunge() (err error) {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
@@ -1367,7 +1303,6 @@ func (d *Dialer) Expunge() (err error) {
 	return err
 }
 
-// set system-flags and keywords
 func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// craft the flags-string
 	addFlags := []string{}
@@ -1420,7 +1355,6 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	return err
 }
 
-// GetUIDs returns the UIDs in the current folder that match the search
 func parseUIDSearchResponse(r string) ([]int, error) {
 	if idx := strings.Index(r, nl); idx != -1 {
 		r = r[:idx]
@@ -1480,14 +1414,11 @@ const (
 
 const (
 	EEName uint8 = iota
-	// EESR is unused and should be ignored
 	EESR
 	EEMailbox
 	EEHost
 )
 
-// GetEmails returns email with their bodies for the given UIDs in the current folder.
-// If no UIDs are given, then everything in the current folder is selected
 func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	emails, err = d.GetOverviews(uids...)
 	if err != nil {
@@ -1563,7 +1494,6 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 						}
 						success = false
 
-						// continue RecL
 					} else {
 
 						e.Subject = env.GetHeader("Subject")
@@ -1646,8 +1576,6 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	return emails, err
 }
 
-// GetOverviews returns emails without bodies for the given UIDs in the current folder.
-// If no UIDs are given, then everything in the current folder is selected
 func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
@@ -1800,7 +1728,6 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 							// 	if Verbose {
 							// 		log(d.ConnNum, d.Folder, Brown("email address has no mailbox name (probably not a real email), skipping"))
 							// 	}
-							// 	continue RecordsL
 							// }
 							mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
 							if err != nil {
@@ -1835,7 +1762,6 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	return emails, err
 }
 
-// Token is a fetch response token (e.g. a number, or a quoted section, or a container, etc.)
 type Token struct {
 	Type   TType
 	Str    string
@@ -1843,33 +1769,22 @@ type Token struct {
 	Tokens []*Token
 }
 
-// TType is the enum type for token values
 type TType uint8
 
 const (
-	// TUnset is an unset token; used by the parser
 	TUnset TType = iota
-	// TAtom is a string that's prefixed with `{n}`
-	// where n is the number of bytes in the string
 	TAtom
-	// TNumber is a numeric literal
 	TNumber
-	// TLiteral is a literal (think string, ish, used mainly for field names, I hope)
 	TLiteral
-	// TQuoted is a quoted piece of text
 	TQuoted
-	// TNil is a nil value, nothing
 	TNil
-	// TContainer is a container of tokens
 	TContainer
 )
 
-// TimeFormat is the Go time version of the IMAP times
 const TimeFormat = "_2-Jan-2006 15:04:05 -0700"
 
 type tokenContainer *[]*Token
 
-// ParseFetchResponse parses a response from a FETCH command into tokens
 func parseFetchTokens(r string) ([]*Token, error) {
 	tokens := make([]*Token, 0)
 
@@ -1965,7 +1880,6 @@ func parseFetchTokens(r string) ([]*Token, error) {
 
 				i++ // Advance 'i' past '}' to the start of actual literal data
 
-				// skip CRLF
 				if i < len(r) && r[i] == '\r' {
 					i++
 				}
@@ -2134,7 +2048,6 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 	return records, nil
 }
 
-// IsLiteral returns if the given byte is an acceptable literal character
 func IsLiteral(b rune) bool {
 	switch {
 	case unicode.IsDigit(b),
@@ -2148,7 +2061,6 @@ func IsLiteral(b rune) bool {
 	return false
 }
 
-// GetTokenName returns the name of the given token type token
 func GetTokenName(tokenType TType) string {
 	switch tokenType {
 	case TUnset:
@@ -2186,8 +2098,6 @@ func (t Token) String() string {
 	return ""
 }
 
-// CheckType validates a type against a list of acceptable types,
-// if the type of the token isn't in the list, an error is returned
 func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...interface{}) (err error) {
 	ok := false
 	for _, a := range acceptableTypes {

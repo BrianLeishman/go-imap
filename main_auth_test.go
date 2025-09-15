@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-// mockIMAPServer creates a simple IMAP server for testing
 type mockIMAPServer struct {
 	listener       net.Listener
 	address        string
@@ -80,7 +79,6 @@ func (s *mockIMAPServer) handleConnection(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
-	// Send greeting
 	writer.WriteString("* OK IMAP4rev1 Mock Server Ready\r\n")
 	writer.Flush()
 
@@ -168,7 +166,6 @@ func (s *mockIMAPServer) GetPort() int {
 	return port
 }
 
-// generateSelfSignedCertificate generates a self-signed certificate for testing
 func generateSelfSignedCertificate() (tls.Certificate, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -320,8 +317,6 @@ func TestConnectionRetry(t *testing.T) {
 		TLSSkipVerify = originalTLSSkipVerify
 	}()
 
-	// Test connecting to a port that's not listening
-	// This should retry according to RetryCount
 	start := time.Now()
 	_, err := New("user", "pass", "127.0.0.1", 59999) // Use unlikely port
 	elapsed := time.Since(start)
@@ -363,7 +358,6 @@ func TestReconnectWithBadCredentials(t *testing.T) {
 	}
 	defer server.Close()
 
-	// Create a connection with good credentials
 	d, err := New("testuser", "testpass", server.GetHost(), server.GetPort())
 	if err != nil {
 		t.Fatalf("Failed to create initial connection: %v", err)
