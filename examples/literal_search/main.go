@@ -34,6 +34,7 @@ func main() {
 	fmt.Println()
 
 	// Example searches with literal syntax for various character sets
+	// Using the new MakeIMAPLiteral helper function for convenience
 	literalSearches := []struct {
 		description string
 		query       string
@@ -41,32 +42,32 @@ func main() {
 	}{
 		{
 			"Search for Cyrillic text 'тест' (test) in subject",
-			`CHARSET UTF-8 Subject {8}` + "\r\n" + "тест",
+			`CHARSET UTF-8 Subject ` + imap.MakeIMAPLiteral("тест"),
 			"Russian",
 		},
 		{
 			"Search for Chinese text '测试' (test) in subject",
-			`CHARSET UTF-8 Subject {6}` + "\r\n" + "测试",
+			`CHARSET UTF-8 Subject ` + imap.MakeIMAPLiteral("测试"),
 			"Chinese",
 		},
 		{
 			"Search for Japanese text 'テスト' (test) in subject",
-			`CHARSET UTF-8 Subject {9}` + "\r\n" + "テスト",
+			`CHARSET UTF-8 Subject ` + imap.MakeIMAPLiteral("テスト"),
 			"Japanese",
 		},
 		{
 			"Search for Arabic text 'اختبار' (test) in subject",
-			`CHARSET UTF-8 Subject {12}` + "\r\n" + "اختبار",
+			`CHARSET UTF-8 Subject ` + imap.MakeIMAPLiteral("اختبار"),
 			"Arabic",
 		},
 		{
 			"Search for emoji '😀👍' in body text",
-			`CHARSET UTF-8 BODY {8}` + "\r\n" + "😀👍",
+			`CHARSET UTF-8 BODY ` + imap.MakeIMAPLiteral("😀👍"),
 			"Emoji",
 		},
 		{
 			"Search for German umlaut 'Prüfung' (test) in subject",
-			`CHARSET UTF-8 Subject {8}` + "\r\n" + "Prüfung",
+			`CHARSET UTF-8 Subject ` + imap.MakeIMAPLiteral("Prüfung"),
 			"German",
 		},
 	}
@@ -119,6 +120,15 @@ func main() {
 	fmt.Println("• UTF-8 characters may use 1-4 bytes per character")
 	fmt.Println("• The library automatically detects {n} syntax and handles the continuation protocol")
 	fmt.Println("• Backward compatibility: regular ASCII searches work unchanged")
+	fmt.Println("• NEW: Use imap.MakeIMAPLiteral() helper for automatic byte counting")
+	fmt.Println()
+
+	fmt.Println("=== MakeIMAPLiteral Helper Function Examples ===")
+	helperExamples := []string{"test", "тест", "测试", "😀👍"}
+	for _, text := range helperExamples {
+		literal := imap.MakeIMAPLiteral(text)
+		fmt.Printf("imap.MakeIMAPLiteral(\"%s\") = \"%s\"\n", text, strings.ReplaceAll(literal, "\r\n", "\\r\\n"))
+	}
 	fmt.Println()
 
 	fmt.Println("Example byte counts for different characters:")
