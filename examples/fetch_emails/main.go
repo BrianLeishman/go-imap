@@ -20,13 +20,11 @@ func main() {
 		}
 	}()
 
-	// Select folder
 	err = m.SelectFolder("INBOX")
 	if err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
 
-	// Get some UIDs to work with
 	uids, err := m.GetUIDs("1:5") // Get first 5 emails
 	if err != nil {
 		log.Fatalf("Failed to get UIDs: %v", err)
@@ -41,7 +39,6 @@ func main() {
 
 	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===")
 
-	// Get overview (headers only, no body) - FAST
 	overviews, err := m.GetOverviews(uids...)
 	if err != nil {
 		log.Fatalf("Failed to get overviews: %v", err)
@@ -65,7 +62,6 @@ func main() {
 		fetchUIDs = uids[:3]
 	}
 
-	// Get full emails with bodies - SLOWER
 	emails, err := m.GetEmails(fetchUIDs...)
 	if err != nil {
 		log.Fatalf("Failed to get emails: %v", err)
@@ -85,7 +81,6 @@ func main() {
 		fmt.Printf("Flags: %v\n", email.Flags)
 		fmt.Printf("Size: %d bytes (%.1f KB)\n", email.Size, float64(email.Size)/1024)
 
-		// Body content
 		if len(email.Text) > 0 {
 			preview := email.Text
 			if len(preview) > 200 {

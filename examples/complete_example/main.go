@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-	// Configure the library
 	imap.Verbose = false
 	imap.RetryCount = 3
 	imap.DialTimeout = 10 * time.Second
@@ -28,7 +27,6 @@ func main() {
 		}
 	}()
 
-	// List folders
 	fmt.Println("\n📁 Available folders:")
 	folders, err := m.GetFolders()
 	if err != nil {
@@ -38,13 +36,11 @@ func main() {
 		fmt.Printf("  - %s\n", folder)
 	}
 
-	// Select INBOX
 	fmt.Println("\n📥 Selecting INBOX...")
 	if err := m.SelectFolder("INBOX"); err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
 
-	// Get unread emails
 	fmt.Println("\n🔍 Searching for unread emails...")
 	unreadUIDs, err := m.GetUIDs("UNSEEN")
 	if err != nil {
@@ -85,7 +81,6 @@ func main() {
 				}
 			}
 
-			// Mark first email as read
 			if uid == unreadUIDs[0] {
 				fmt.Printf("\n✓ Marking email %d as read...\n", uid)
 				if err := m.MarkSeen(uid); err != nil {
@@ -95,7 +90,6 @@ func main() {
 		}
 	}
 
-	// Get some statistics
 	fmt.Println("\n📊 Mailbox Statistics:")
 	allUIDs, _ := m.GetUIDs("ALL")
 	seenUIDs, _ := m.GetUIDs("SEEN")
@@ -106,7 +100,6 @@ func main() {
 	fmt.Printf("  Unread emails: %d\n", len(allUIDs)-len(seenUIDs))
 	fmt.Printf("  Flagged emails: %d\n", len(flaggedUIDs))
 
-	// Start IDLE monitoring for 10 seconds
 	fmt.Println("\n👀 Monitoring for new emails (10 seconds)...")
 	handler := &imap.IdleHandler{
 		OnExists: func(e imap.ExistsEvent) {

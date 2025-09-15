@@ -12,12 +12,13 @@ Works great with Gmail, Office 365/Exchange, and most RFC‑compliant IMAP serve
 
 - TLS connections and timeouts (`DialTimeout`, `CommandTimeout`)
 - Authentication via `LOGIN` and `XOAUTH2`
-- Folders: `SELECT`/`EXAMINE`, list folders
+- Folders: `SELECT`/`EXAMINE`, list folders, error-tolerant counting
 - Search: `UID SEARCH` helpers with RFC 3501 literal syntax for non-ASCII text
 - Fetch: envelope, flags, size, text/HTML bodies, attachments
 - Mutations: move, set flags, delete + expunge
 - IMAP IDLE with event handlers for `EXISTS`, `EXPUNGE`, `FETCH`
 - Automatic reconnect with re‑auth and folder restore
+- Robust folder handling with graceful error recovery for problematic folders
 
 ## Install
 
@@ -84,18 +85,21 @@ go run examples/basic_connection/main.go
 
 ### Available Examples
 
-**Getting Started**
+#### Getting Started
+
 - [`basic_connection`](examples/basic_connection/main.go) - Basic LOGIN authentication and connection setup
 - [`oauth2_connection`](examples/oauth2_connection/main.go) - OAuth 2.0 (XOAUTH2) authentication for Gmail/Office 365
 
-**Working with Emails**
+#### Working with Emails
+
 - [`folders`](examples/folders/main.go) - List folders, select/examine folders, get email counts
 - [`search`](examples/search/main.go) - Search emails by various criteria (flags, dates, sender, size, etc.)
 - [`literal_search`](examples/literal_search/main.go) - Search with non-ASCII characters using RFC 3501 literal syntax
 - [`fetch_emails`](examples/fetch_emails/main.go) - Fetch email headers (fast) and full content with attachments (slower)
 - [`email_operations`](examples/email_operations/main.go) - Move emails, set/remove flags, delete and expunge
 
-**Advanced Features**
+#### Advanced Features
+
 - [`idle_monitoring`](examples/idle_monitoring/main.go) - Real-time email notifications with IDLE
 - [`error_handling`](examples/error_handling/main.go) - Robust error handling, reconnection, and timeout configuration
 - [`complete_example`](examples/complete_example/main.go) - Full-featured example combining multiple operations
@@ -143,6 +147,137 @@ excludedFolders := []string{"Trash", "[Gmail]/Spam"}
 count, err := m.GetTotalEmailCountExcluding(excludedFolders)
 if err != nil { panic(err) }
 fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
+
+// Error-tolerant counting (continues even if some folders fail)
+// This is especially useful with Gmail or other providers that have inaccessible system folders
+safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
+if err != nil { panic(err) }
+fmt.Printf("Total accessible emails: %d\n", safeCount)
+
+if len(folderErrors) > 0 {
+    fmt.Printf("Note: %d folders had errors:\n", len(folderErrors))
+    for _, folderErr := range folderErrors {
+        fmt.Printf("  - %v\n", folderErr)
+    }
+}
+// Example output:
+// Total accessible emails: 1247
+// Note: 2 folders had errors:
+//   - folder "[Gmail]": NO [NONEXISTENT] Unknown Mailbox
+//   - folder "[Gmail]/All Mail": NO [NONEXISTENT] Unknown Mailbox
+
+// Get detailed statistics for each folder (includes max UID)
+stats, err := m.GetFolderStats()
+if err != nil { panic(err) }
+
+fmt.Printf("Found %d folders:\n", len(stats))
+for _, stat := range stats {
+    if stat.Error != nil {
+        fmt.Printf("  %-20s [ERROR]: %v\n", stat.Name, stat.Error)
+    } else {
+        fmt.Printf("  %-20s %5d emails, max UID: %d\n",
+            stat.Name, stat.Count, stat.MaxUID)
+    }
+}
+// Example output:
+// Found 8 folders:
+//   INBOX                 342 emails, max UID: 1543
+//   Sent                   89 emails, max UID: 234
+//   Drafts                  3 emails, max UID: 67
+//   Trash                  12 emails, max UID: 89
+//   [Gmail]          [ERROR]: NO [NONEXISTENT] Unknown Mailbox
+//   [Gmail]/Spam           0 emails, max UID: 0
+//   INBOX/Archive        801 emails, max UID: 2156
+//   INBOX/Important       45 emails, max UID: 987
+```
+
+### 1.1. Handling Problematic Folders
+
+Some IMAP servers (especially Gmail) have special system folders that cannot be examined or may return errors. The traditional `GetTotalEmailCount()` method will fail completely if any folder is inaccessible, but the new safe methods continue processing other folders.
+
+#### When to Use Safe Methods
+
+- **Gmail users**: Gmail's `[Gmail]` folder often returns "NO [NONEXISTENT] Unknown Mailbox"
+- **Exchange/Office 365**: Some system folders may be restricted
+- **Custom IMAP servers**: Servers with permission-restricted folders
+- **Production applications**: When you need reliable email counting despite folder issues
+
+```go
+// Traditional approach - fails if ANY folder has issues
+totalCount, err := m.GetTotalEmailCount()
+if err != nil {
+    // This will fail completely if "[Gmail]" folder is inaccessible
+    fmt.Printf("Count failed: %v\n", err)
+    // Output: Count failed: EXAMINE command failed: NO [NONEXISTENT] Unknown Mailbox
+}
+
+// Safe approach - continues despite folder errors
+safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
+if err != nil {
+    // Only fails on serious connection issues, not individual folder problems
+    panic(err)
+}
+
+fmt.Printf("Counted %d emails from accessible folders\n", safeCount)
+if len(folderErrors) > 0 {
+    fmt.Printf("Skipped %d problematic folders\n", len(folderErrors))
+}
+
+// Safe exclusion - combine error tolerance with folder filtering
+excludedFolders := []string{"Trash", "Junk", "Deleted Items"}
+count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(excludedFolders)
+if err != nil { panic(err) }
+
+fmt.Printf("Active emails: %d (excluding trash/spam and skipping errors)\n", count)
+
+// Detailed analysis with error handling
+stats, err := m.GetFolderStats()
+if err != nil { panic(err) }
+
+accessibleFolders := 0
+totalEmails := 0
+maxUID := 0
+
+for _, stat := range stats {
+    if stat.Error != nil {
+        fmt.Printf("⚠️  %s: %v\n", stat.Name, stat.Error)
+        continue
+    }
+
+    accessibleFolders++
+    totalEmails += stat.Count
+    if stat.MaxUID > maxUID {
+        maxUID = stat.MaxUID
+    }
+
+    fmt.Printf("✅ %-25s %5d emails (UID range: 1-%d)\n",
+        stat.Name, stat.Count, stat.MaxUID)
+}
+
+fmt.Printf("\nSummary: %d/%d folders accessible, %d total emails, highest UID: %d\n",
+    accessibleFolders, len(stats), totalEmails, maxUID)
+```
+
+#### Error Types You Might Encounter
+
+```go
+stats, err := m.GetFolderStats()
+if err != nil { panic(err) }
+
+for _, stat := range stats {
+    if stat.Error != nil {
+        fmt.Printf("Folder '%s' error: %v\n", stat.Name, stat.Error)
+
+        // Common error patterns:
+        if strings.Contains(stat.Error.Error(), "NONEXISTENT") {
+            fmt.Printf("  → This is a virtual/system folder that can't be examined\n")
+        } else if strings.Contains(stat.Error.Error(), "permission") {
+            fmt.Printf("  → This folder requires special permissions\n")
+        } else {
+            fmt.Printf("  → Unexpected error, might indicate connection issues\n")
+        }
+    }
+}
 ```
 
 ### 2. Searching for Emails

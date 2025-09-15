@@ -19,13 +19,11 @@ func main() {
 		}
 	}()
 
-	// Select folder
 	err = m.SelectFolder("INBOX")
 	if err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
 
-	// Get some emails to work with
 	uids, err := m.GetUIDs("1:3") // Get first 3 emails
 	if err != nil {
 		log.Fatalf("Failed to get UIDs: %v", err)
@@ -81,7 +79,6 @@ func main() {
 
 	fmt.Println("\n=== Setting Individual Flags ===")
 
-	// Mark as read
 	err = m.MarkSeen(uid)
 	if err != nil {
 		log.Printf("Failed to mark as seen: %v", err)
@@ -89,7 +86,6 @@ func main() {
 		fmt.Printf("Marked email UID %d as read (\\Seen flag set)\n", uid)
 	}
 
-	// Mark as unread (remove Seen flag)
 	flags := imap.Flags{
 		Seen: imap.FlagRemove,
 	}

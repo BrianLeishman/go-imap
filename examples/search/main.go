@@ -20,7 +20,6 @@ func main() {
 		}
 	}()
 
-	// Select folder first
 	err = m.SelectFolder("INBOX")
 	if err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
@@ -87,7 +86,6 @@ func main() {
 
 	fmt.Println("\n=== Complex Searches ===")
 
-	// Complex searches
 	complexUIDs1, _ := m.GetUIDs(`UNSEEN FROM "support@github.com" SINCE 1-Jan-2024`)
 	complexUIDs2, _ := m.GetUIDs(`FLAGGED SUBJECT "important" SINCE 1-Jan-2024`)
 	complexUIDs3, _ := m.GetUIDs(`NOT SEEN NOT FROM "noreply@" SINCE 1-Jan-2024`)
@@ -98,7 +96,6 @@ func main() {
 
 	fmt.Println("\n=== UID Ranges ===")
 
-	// UID ranges
 	firstUID, _ := m.GetUIDs("1")       // First email
 	lastUID, _ := m.GetUIDs("*")        // Last email
 	first10UIDs, _ := m.GetUIDs("1:10") // First 10 emails
@@ -126,7 +123,6 @@ func main() {
 
 	fmt.Println("\n=== Special Searches ===")
 
-	// Special flags
 	answeredUIDs, _ := m.GetUIDs("ANSWERED")
 	unansweredUIDs, _ := m.GetUIDs("UNANSWERED")
 	deletedUIDs, _ := m.GetUIDs("DELETED")

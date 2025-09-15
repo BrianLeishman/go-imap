@@ -70,24 +70,69 @@ func main() {
 
 	fmt.Println("\n--- Email Counts ---")
 
-	// Get total email count across all folders
+	// Get total email count across all folders (traditional approach)
 	totalCount, err := m.GetTotalEmailCount()
 	if err != nil {
-		log.Fatalf("Failed to get total email count: %v", err)
+		fmt.Printf("Traditional count failed: %v\n", err)
+		fmt.Println("This might happen with Gmail or other providers that have inaccessible system folders")
+	} else {
+		fmt.Printf("Total emails in all folders: %d\n", totalCount)
 	}
-	fmt.Printf("Total emails in all folders: %d\n", totalCount)
 
-	// Get count excluding certain folders
+	// Get total email count with robust error handling
+	safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
+	if err != nil {
+		log.Fatalf("Failed to get safe total email count: %v", err)
+	}
+	fmt.Printf("Total emails (safe count): %d\n", safeCount)
+
+	if len(folderErrors) > 0 {
+		fmt.Printf("Note: %d folders had errors:\n", len(folderErrors))
+		for _, folderErr := range folderErrors {
+			fmt.Printf("  - %v\n", folderErr)
+		}
+	}
+
+	// Get count excluding certain folders (safe version)
 	excludedFolders := []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"}
-	count, err := m.GetTotalEmailCountExcluding(excludedFolders)
+	count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(excludedFolders)
 	if err != nil {
 		log.Fatalf("Failed to get filtered email count: %v", err)
 	}
 	fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
 
+	if len(folderErrors) > 0 {
+		fmt.Printf("Folders with errors during exclusion count: %d\n", len(folderErrors))
+	}
+
 	// Calculate percentage
-	if totalCount > 0 {
-		percentage := float64(count) / float64(totalCount) * 100
+	if safeCount > 0 {
+		percentage := float64(count) / float64(safeCount) * 100
 		fmt.Printf("That's %.1f%% of your total emails\n", percentage)
 	}
+
+	fmt.Println("\n--- Detailed Folder Statistics ---")
+
+	// Get detailed statistics for each folder
+	stats, err := m.GetFolderStats()
+	if err != nil {
+		log.Fatalf("Failed to get folder statistics: %v", err)
+	}
+
+	fmt.Printf("Found %d folders:\n", len(stats))
+	successfulFolders := 0
+	totalEmails := 0
+
+	for _, stat := range stats {
+		if stat.Error != nil {
+			fmt.Printf("  %-30s [ERROR]: %v\n", stat.Name, stat.Error)
+		} else {
+			fmt.Printf("  %-30s %5d emails, max UID: %d\n", stat.Name, stat.Count, stat.MaxUID)
+			successfulFolders++
+			totalEmails += stat.Count
+		}
+	}
+
+	fmt.Printf("\nSummary: %d/%d folders accessible, %d total emails\n",
+		successfulFolders, len(stats), totalEmails)
 }

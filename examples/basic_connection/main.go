@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-	// Optional configuration
 	imap.Verbose = false                   // Set to true to see all IMAP commands/responses
 	imap.RetryCount = 3                    // Number of retries for failed commands
 	imap.DialTimeout = 10 * time.Second    // Connection timeout
