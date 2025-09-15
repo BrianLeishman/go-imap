@@ -14,7 +14,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// Select folder
 	err = m.SelectFolder("INBOX")
@@ -35,7 +39,7 @@ func main() {
 
 	fmt.Printf("Found %d emails to fetch\n\n", len(uids))
 
-	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===\n")
+	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===")
 
 	// Get overview (headers only, no body) - FAST
 	overviews, err := m.GetOverviews(uids...)
@@ -53,7 +57,7 @@ func main() {
 		fmt.Println()
 	}
 
-	fmt.Println("=== Fetching Full Emails (With Bodies - SLOWER) ===\n")
+	fmt.Println("=== Fetching Full Emails (With Bodies - SLOWER) ===")
 
 	// Limit to first 3 for full fetch (to keep example fast)
 	fetchUIDs := uids
@@ -124,7 +128,7 @@ func main() {
 		fmt.Println("\n" + strings.Repeat("-", 50))
 	}
 
-	fmt.Println("\n=== Using the String() Method ===\n")
+	fmt.Println("\n=== Using the String() Method ===")
 
 	// The String() method provides a quick summary
 	for uid, email := range emails {
@@ -134,7 +138,7 @@ func main() {
 	}
 
 	// Example of processing attachments
-	fmt.Println("\n=== Processing Attachments Example ===\n")
+	fmt.Println("\n=== Processing Attachments Example ===")
 
 	for uid, email := range emails {
 		if len(email.Attachments) > 0 {

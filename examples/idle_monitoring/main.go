@@ -17,7 +17,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// Select the folder to monitor
 	if err := m.SelectFolder("INBOX"); err != nil {
@@ -141,59 +145,4 @@ func main() {
 	allUIDs, _ = m.GetUIDs("ALL")
 	unseenUIDs, _ = m.GetUIDs("UNSEEN")
 	fmt.Printf("\nFinal state: %d total emails, %d unread\n", len(allUIDs), len(unseenUIDs))
-}
-
-// Helper function for a more complete monitoring example
-func monitorInboxWithStats(m *imap.Dialer) {
-	// Track statistics
-	stats := struct {
-		NewEmails     int
-		DeletedEmails int
-		FlagChanges   int
-		StartTime     time.Time
-	}{
-		StartTime: time.Now(),
-	}
-
-	// Select the folder to monitor
-	if err := m.SelectFolder("INBOX"); err != nil {
-		log.Fatalf("Failed to select INBOX: %v", err)
-	}
-
-	handler := &imap.IdleHandler{
-		OnExists: func(e imap.ExistsEvent) {
-			stats.NewEmails++
-			fmt.Printf("📬 New email! Total new: %d\n", stats.NewEmails)
-		},
-		OnExpunge: func(e imap.ExpungeEvent) {
-			stats.DeletedEmails++
-			fmt.Printf("🗑️ Email deleted! Total deleted: %d\n", stats.DeletedEmails)
-		},
-		OnFetch: func(e imap.FetchEvent) {
-			stats.FlagChanges++
-			fmt.Printf("📝 Flags changed! Total changes: %d\n", stats.FlagChanges)
-		},
-	}
-
-	fmt.Println("Starting enhanced IDLE monitoring with statistics...")
-	if err := m.StartIdle(handler); err != nil {
-		log.Fatalf("Failed to start IDLE: %v", err)
-	}
-
-	// Monitor for 10 minutes
-	time.Sleep(10 * time.Minute)
-
-	fmt.Println("\nStopping IDLE monitoring...")
-	if err := m.StopIdle(); err != nil {
-		log.Printf("Error stopping IDLE: %v", err)
-	}
-
-	// Print statistics
-	duration := time.Since(stats.StartTime)
-	fmt.Println("\n=== Monitoring Statistics ===")
-	fmt.Printf("Duration: %v\n", duration)
-	fmt.Printf("New emails received: %d\n", stats.NewEmails)
-	fmt.Printf("Emails deleted: %d\n", stats.DeletedEmails)
-	fmt.Printf("Flag changes: %d\n", stats.FlagChanges)
-	fmt.Printf("Total events: %d\n", stats.NewEmails+stats.DeletedEmails+stats.FlagChanges)
 }

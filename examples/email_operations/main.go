@@ -13,7 +13,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
-	defer m.Close()
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
 
 	// Select folder
 	err = m.SelectFolder("INBOX")
@@ -62,9 +66,13 @@ func main() {
 			fmt.Printf("Moved email UID %d to Archive\n", uid)
 
 			// Move it back for further demos
-			m.SelectFolder("INBOX/Archive")
-			m.MoveEmail(uid, "INBOX")
-			m.SelectFolder("INBOX")
+			if err := m.SelectFolder("INBOX/Archive"); err != nil {
+				log.Printf("Failed to select Archive folder: %v", err)
+			} else if err := m.MoveEmail(uid, "INBOX"); err != nil {
+				log.Printf("Failed to move email back: %v", err)
+			} else if err := m.SelectFolder("INBOX"); err != nil {
+				log.Printf("Failed to select INBOX: %v", err)
+			}
 			fmt.Printf("Moved email back to INBOX for demo\n")
 		}
 	} else {
