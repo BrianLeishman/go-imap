@@ -1,7 +1,7 @@
 # Agent Guidelines for the IMAP Library
 
-> **Target toolchain:** Go 1.24.x (latest point-release: **1.24.3**, 6 May 2025).
-> Set `go 1.24` in `go.mod`; older versions are **not** supported. ([go.dev][1])
+> **Target toolchain:** Go 1.25.x (latest point-release: **1.25.1**).
+> Set `go 1.25` in `go.mod` and `toolchain go1.25.1`; older versions are **not** supported. ([go.dev][1])
 
 ---
 
@@ -48,7 +48,7 @@
 ## 7  CI gates (`.github/workflows/ci.yml`)
 
 ```yaml
-go-version: '^1.24'
+go-version: '^1.25'
 steps:
   - run: go vet ./...
   - run: go test ./... -race -coverprofile=coverage.out
@@ -72,7 +72,7 @@ Fail the pipeline on **any** linter warning.
 
 ## 9  Deprecation & refactors
 
-Breaking API changes follow semver via `/vN` module paths. Internal refactors that improve clarity or adopt new 1.24 features may land at any time.
+Breaking API changes follow semver via `/vN` module paths. Internal refactors that improve clarity or adopt new 1.25 features may land at any time.
 
 ---
 
@@ -85,17 +85,17 @@ Breaking API changes follow semver via `/vN` module paths. Internal refactors th
 - Prefer "Squash and merge" to keep history tidy; the squash title should be descriptive.
 - For trivial changes (docs, CI), still use a PR — no direct commits.
 
-### Appendix A – Go 1.24 features worth using
+### Appendix A – Go 1.25 features worth using
 
 | Feature                                | Where we’ll use it                                     |
 | -------------------------------------- | ------------------------------------------------------ |
-| **Generic type aliases**               | `type Flag[T ~string] = T` for compile-time flag sets. |
-| **`errors.Join`**                      | Aggregate shutdown errors across goroutines.           |
-| **Faster map growth**                  | High-churn caches in `selector`.                       |
-| **Dir-scoped `fs.FS`**                 | Future maildir import tooling.                         |
-| **Histogram API in `runtime/metrics`** | Per-agent latency / throughput metrics.                |
+| **`go.mod ignore` directive**          | Keep integration fixtures out of default module builds.|
+| **Container-aware `GOMAXPROCS`**       | Match runtime defaults to container CPU quotas.        |
+| **`testing/synctest`**                 | Stabilize concurrency-heavy tests without flakes.      |
+| **`runtime/trace.FlightRecorder`**     | Capture short traces when debugging agent stalls.      |
+| **`go vet` hostport analyzer**         | Catch IPv6-unsafe host/port string formatting.         |
 
-See the Go 1.24 release notes for full details. ([tip.golang.org][2])
+See the Go 1.25 release notes for full details. ([tip.golang.org][2])
 
 [1]: https://go.dev/doc/devel/release?utm_source=chatgpt.com "Release History - The Go Programming Language"
-[2]: https://tip.golang.org/doc/go1.24?utm_source=chatgpt.com "Go 1.24 Release Notes - The Go Programming Language"
+[2]: https://tip.golang.org/doc/go1.25?utm_source=chatgpt.com "Go 1.25 Release Notes - The Go Programming Language"
