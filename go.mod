@@ -9,7 +9,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/jhillyerd/enmime v1.3.0
-	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
 	golang.org/x/net v0.44.0

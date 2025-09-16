@@ -1,22 +1,6 @@
 package imap
 
-import (
-	"fmt"
-	"time"
-
-	"github.com/logrusorgru/aurora"
-)
-
-// log outputs a formatted message with timestamp and connection info
-func log(connNum int, folder string, msg any) {
-	var name string
-	if len(folder) != 0 {
-		name = fmt.Sprintf("IMAP%d:%s", connNum, folder)
-	} else {
-		name = fmt.Sprintf("IMAP%d", connNum)
-	}
-	fmt.Println(aurora.Sprintf("%s %s: %s", time.Now().Format("2006-01-02 15:04:05.000000"), aurora.Colorize(name, aurora.CyanFg|aurora.BoldFm), msg))
-}
+import "fmt"
 
 // dropNl removes trailing newline characters from a byte slice
 func dropNl(b []byte) []byte {

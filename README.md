@@ -43,7 +43,7 @@ import (
 
 func main() {
     // Optional configuration
-    imap.Verbose = false      // Set to true to see all IMAP commands/responses
+    imap.Verbose = false      // Enable to emit debug-level IMAP logs
     imap.RetryCount = 3        // Number of retries for failed commands
     imap.DialTimeout = 10 * time.Second
     imap.CommandTimeout = 30 * time.Second
@@ -74,6 +74,36 @@ defer m.Close()
 // The OAuth2 connection works exactly like LOGIN after authentication
 if err := m.SelectFolder("INBOX"); err != nil { panic(err) }
 ```
+
+## Logging
+
+The client uses Go's `log/slog` package for structured logging. By default it
+emits info, warning, and error events to standard error with the `component`
+attribute set to `imap/agent`. Opt-in debug output is controlled by the
+existing `imap.Verbose` flag:
+
+```go
+imap.Verbose = true // Log every IMAP command/response at debug level
+```
+
+You can plug in your own logger implementation via `imap.SetLogger`. For
+`*slog.Logger` specifically, call `imap.SetSlogLogger`. When unset, the library
+falls back to a text handler.
+
+```go
+import (
+    "log/slog"
+    "os"
+    imap "github.com/BrianLeishman/go-imap"
+)
+
+handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+imap.SetSlogLogger(slog.New(handler))
+```
+
+Call `imap.SetLogger(nil)` to reset to the built-in logger. When verbose mode is
+enabled you can further reduce noise by setting `imap.SkipResponses = true` to
+suppress raw server responses.
 
 ## Examples
 
@@ -573,7 +603,7 @@ func monitorInbox(m *imap.Dialer) {
 func robustEmailFetch(m *imap.Dialer) {
     // Set retry configuration
     imap.RetryCount = 5  // Will retry failed operations 5 times
-    imap.Verbose = true   // See what's happening during retries
+    imap.Verbose = true  // Emit debug logs while retrying commands
 
     err := m.SelectFolder("INBOX")
     if err != nil {
@@ -848,5 +878,4 @@ MIT © Brian Leishman
 ### Built With
 
 - [jhillyerd/enmime](https://github.com/jhillyerd/enmime) – MIME parsing
-- [logrusorgru/aurora](https://github.com/logrusorgru/aurora) – ANSI color output
 - [dustin/go-humanize](https://github.com/dustin/go-humanize) – Human‑friendly sizes

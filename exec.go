@@ -10,7 +10,6 @@ import (
 	"time"
 
 	retry "github.com/StirlingMarketingGroup/go-retry"
-	"github.com/logrusorgru/aurora"
 	"github.com/rs/xid"
 )
 
@@ -28,7 +27,8 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 		if Verbose {
-			log(d.ConnNum, d.Folder, strings.ReplaceAll(fmt.Sprintf("%s %s", aurora.Bold("->"), strings.TrimSpace(c)), fmt.Sprintf(`"%s"`, d.Password), `"****"`))
+			sanitized := strings.ReplaceAll(strings.TrimSpace(c), fmt.Sprintf(`"%s"`, d.Password), `"****"`)
+			debugLog(d.ConnNum, d.Folder, "sending command", "command", sanitized)
 		}
 
 		_, err = d.conn.Write([]byte(c))
@@ -72,7 +72,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			}
 
 			if Verbose && !SkipResponses {
-				log(d.ConnNum, d.Folder, fmt.Sprintf("<- %s", dropNl(line)))
+				debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
 			}
 
 			// if strings.Contains(string(line), "--00000000000030095105741e7f1f") {
@@ -104,7 +104,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		return err
 	}, retryCount, func(err error) error {
 		if Verbose {
-			log(d.ConnNum, d.Folder, aurora.Red(err))
+			warnLog(d.ConnNum, d.Folder, "command failed, closing connection", "error", err)
 		}
 		_ = d.Close()
 		return nil
@@ -112,9 +112,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 		return d.Reconnect()
 	})
 	if err != nil {
-		if Verbose {
-			log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold("All retries failed")))
-		}
+		errorLog(d.ConnNum, d.Folder, "command retries exhausted", "error", err)
 		return "", err
 	}
 

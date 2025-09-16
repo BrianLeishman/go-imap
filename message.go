@@ -13,7 +13,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime"
-	"github.com/logrusorgru/aurora"
 	"golang.org/x/net/html/charset"
 )
 
@@ -345,7 +344,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 					env, err := enmime.ReadEnvelope(r)
 					if err != nil {
 						if Verbose {
-							log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Sprintf("email body could not be parsed, skipping: %s", err)))
+							warnLog(d.ConnNum, d.Folder, "email body could not be parsed", "error", err)
 							spew.Dump(env)
 							spew.Dump(msg)
 						}
@@ -421,7 +420,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		}
 		return err
 	}, RetryCount, func(err error) error {
-		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
+		errorLog(d.ConnNum, d.Folder, "fetch failed", "error", err)
 		_ = d.Close()
 		return nil
 	}, func() error {
@@ -466,7 +465,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 		}
 		return err
 	}, RetryCount, func(err error) error {
-		log(d.ConnNum, d.Folder, aurora.Red(aurora.Bold(err)))
+		errorLog(d.ConnNum, d.Folder, "fetch failed", "error", err)
 		_ = d.Close()
 		return nil
 	}, func() error {
