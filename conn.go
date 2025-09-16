@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	retry "github.com/StirlingMarketingGroup/go-retry"
-	"github.com/logrusorgru/aurora"
 )
 
 var (
@@ -59,13 +58,13 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 	// Retry only the connection establishment, not authentication
 	err = retry.Retry(func() error {
 		if Verbose {
-			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
+			debugLog(connNum, "", "establishing connection", "host", host, "port", port, "auth", "xoauth2")
 		}
 		var conn *tls.Conn
 		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
-				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
+				debugLog(connNum, "", "connection attempt failed", "error", err)
 			}
 			return err
 		}
@@ -82,7 +81,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		return nil
 	}, RetryCount, func(err error) error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
+			debugLog(connNum, "", "connection retry scheduled")
 			if d != nil && d.conn != nil {
 				_ = d.conn.Close()
 			}
@@ -90,16 +89,14 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 		return nil
 	}, func() error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("retrying connection now")))
+			debugLog(connNum, "", "retrying connection")
 		}
 		return nil
 	})
 	if err != nil {
-		if Verbose {
-			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
-			if d != nil && d.conn != nil {
-				_ = d.conn.Close()
-			}
+		warnLog(connNum, "", "failed to establish connection", "error", err)
+		if d != nil && d.conn != nil {
+			_ = d.conn.Close()
 		}
 		return nil, err
 	}
@@ -107,9 +104,7 @@ func NewWithOAuth2(username string, accessToken string, host string, port int) (
 	// Authenticate after connection is established - no retry for auth failures
 	err = d.Authenticate(username, accessToken)
 	if err != nil {
-		if Verbose {
-			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
-		}
+		errorLog(connNum, "", "authentication failed", "error", err)
 		_ = d.Close()
 		return nil, err
 	}
@@ -130,13 +125,13 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	// Retry only the connection establishment, not authentication
 	err = retry.Retry(func() error {
 		if Verbose {
-			log(connNum, "", aurora.Green(aurora.Bold("establishing connection")))
+			debugLog(connNum, "", "establishing connection", "host", host, "port", port, "auth", "login")
 		}
 		var conn *tls.Conn
 		conn, err = dialHost(host, port)
 		if err != nil {
 			if Verbose {
-				log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("failed to connect: %s", err))))
+				debugLog(connNum, "", "connection attempt failed", "error", err)
 			}
 			return err
 		}
@@ -153,7 +148,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return nil
 	}, RetryCount, func(err error) error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("failed to connect, retrying shortly")))
+			debugLog(connNum, "", "connection retry scheduled")
 			if d != nil && d.conn != nil {
 				_ = d.conn.Close()
 			}
@@ -161,16 +156,14 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 		return nil
 	}, func() error {
 		if Verbose {
-			log(connNum, "", aurora.Yellow(aurora.Bold("retrying connection now")))
+			debugLog(connNum, "", "retrying connection")
 		}
 		return nil
 	})
 	if err != nil {
-		if Verbose {
-			log(connNum, "", aurora.Red(aurora.Bold("failed to establish connection")))
-			if d != nil && d.conn != nil {
-				_ = d.conn.Close()
-			}
+		warnLog(connNum, "", "failed to establish connection", "error", err)
+		if d != nil && d.conn != nil {
+			_ = d.conn.Close()
 		}
 		return nil, err
 	}
@@ -178,9 +171,7 @@ func New(username string, password string, host string, port int) (d *Dialer, er
 	// Authenticate after connection is established - no retry for auth failures
 	err = d.Login(username, password)
 	if err != nil {
-		if Verbose {
-			log(connNum, "", aurora.Red(aurora.Bold(fmt.Sprintf("authentication failed: %s", err))))
-		}
+		errorLog(connNum, "", "authentication failed", "error", err)
 		_ = d.Close()
 		return nil, err
 	}
@@ -213,7 +204,7 @@ func (d *Dialer) Clone() (d2 *Dialer, err error) {
 func (d *Dialer) Close() (err error) {
 	if d.Connected {
 		if Verbose {
-			log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("closing connection")))
+			debugLog(d.ConnNum, d.Folder, "closing connection")
 		}
 		err = d.conn.Close()
 		if err != nil {
@@ -228,7 +219,7 @@ func (d *Dialer) Close() (err error) {
 func (d *Dialer) Reconnect() (err error) {
 	_ = d.Close()
 	if Verbose {
-		log(d.ConnNum, d.Folder, aurora.Yellow(aurora.Bold("reopening connection")))
+		debugLog(d.ConnNum, d.Folder, "reopening connection")
 	}
 
 	conn, err := dialHost(d.Host, d.Port)

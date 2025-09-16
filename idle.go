@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/logrusorgru/aurora"
 )
 
 // Connection state constants
@@ -101,14 +99,14 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 			if !d.Connected {
 				if err := d.Reconnect(); err != nil {
 					if Verbose {
-						log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error with reconnect: %v", err)))
+						warnLog(d.ConnNum, d.Folder, "IDLE reconnect failed", "error", err)
 					}
 					return
 				}
 			}
 			if err := d.startIdleSingle(handler); err != nil {
 				if Verbose {
-					log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("StartIdle error: %v", err)))
+					warnLog(d.ConnNum, d.Folder, "IDLE session stopped", "error", err)
 				}
 				return
 			}
@@ -174,7 +172,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 		})
 		if err != nil {
 			if Verbose {
-				log(d.ConnNum, d.Folder, aurora.Red(fmt.Sprintf("IDLE error: %v", err)))
+				warnLog(d.ConnNum, d.Folder, "IDLE command error", "error", err)
 			}
 			d.setState(StateDisconnected)
 		}
@@ -196,7 +194,7 @@ func (d *Dialer) StopIdle() error {
 	}
 
 	if Verbose {
-		log(d.ConnNum, d.Folder, aurora.Bold("-> DONE"))
+		debugLog(d.ConnNum, d.Folder, "sending DONE to exit IDLE")
 	}
 	if _, err := d.conn.Write([]byte("DONE\r\n")); err != nil {
 		return fmt.Errorf("failed to send DONE: %v", err)
