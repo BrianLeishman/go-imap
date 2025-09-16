@@ -833,7 +833,7 @@ Tested against common providers such as Gmail and Office 365/Exchange. The clien
 
 ## CI & Quality
 
-This repo runs Go 1.24+ on CI with vet and race‑enabled tests. We also track documentation on pkg.go.dev and Go Report Card.
+This repo runs Go 1.25.1+ on CI with vet and race‑enabled tests. We also track documentation on pkg.go.dev and Go Report Card.
 
 ## Contributing
 

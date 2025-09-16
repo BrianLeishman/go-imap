@@ -2,6 +2,8 @@ module github.com/BrianLeishman/go-imap
 
 go 1.25
 
+toolchain go1.25.1
+
 require (
 	github.com/StirlingMarketingGroup/go-retry v0.0.0-20190512160921-94a8eb23e893
 	github.com/davecgh/go-spew v1.1.1
