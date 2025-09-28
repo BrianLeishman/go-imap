@@ -315,22 +315,30 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 
 // parseUIDSearchResponse parses UID SEARCH command responses
 func parseUIDSearchResponse(r string) ([]int, error) {
-	if idx := strings.Index(r, nl); idx != -1 {
-		r = r[:idx]
-	}
-	fields := strings.Fields(r)
-	if len(fields) >= 2 && fields[0] == "*" && fields[1] == "SEARCH" {
+	normalized := strings.ReplaceAll(r, nl, "\n")
+	for rawLine := range strings.SplitSeq(normalized, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "*" || !strings.EqualFold(fields[1], "SEARCH") {
+			continue
+		}
+
 		uids := make([]int, 0, len(fields)-2)
 		for _, f := range fields[2:] {
 			u, err := strconv.Atoi(f)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("parse uid %q: %w", f, err)
 			}
 			uids = append(uids, u)
 		}
 		return uids, nil
 	}
-	return nil, fmt.Errorf("invalid response: %q", r)
+
+	return nil, fmt.Errorf("invalid response: %q", strings.TrimSpace(r))
 }
 
 // IsLiteral checks if a rune is valid for a literal token
