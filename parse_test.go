@@ -209,14 +209,53 @@ func contains(s, substr string) bool {
 }
 
 func TestParseUIDSearchResponse(t *testing.T) {
-	resp := "* SEARCH 123 456\r\nA1 OK SEARCH completed\r\n"
-	got, err := parseUIDSearchResponse(resp)
-	if err != nil {
-		t.Fatalf("parseUIDSearchResponse error: %v", err)
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    []int
+		wantErr bool
+	}{
+		{
+			name:  "basic search response",
+			input: "* SEARCH 123 456\r\nA1 OK SEARCH completed\r\n",
+			want:  []int{123, 456},
+		},
+		{
+			name: "literal preamble is ignored",
+			input: strings.Join([]string{
+				"+ Ready for additional command text",
+				"* SEARCH 15461 15469 15470 15485 15491 15497",
+				"A144 OK UID SEARCH completed",
+			}, "\r\n"),
+			want: []int{15461, 15469, 15470, 15485, 15491, 15497},
+		},
+		{
+			name:    "no search line",
+			input:   "* OK Nothing to see here\r\n",
+			wantErr: true,
+		},
 	}
-	want := []int{123, 456}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v want %v", got, want)
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseUIDSearchResponse(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil result %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseUIDSearchResponse error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
 	}
 }
 
