@@ -138,13 +138,45 @@ func (a Attachment) String() string {
 	return fmt.Sprintf("%s (%s %s)", a.Name, a.MimeType, humanize.Bytes(uint64(len(a.Content))))
 }
 
-// GetUIDs retrieves message UIDs matching a search criteria
+// GetUIDs retrieves message UIDs matching a search criteria.
+// The search parameter is passed directly to the IMAP UID SEARCH command.
+// See RFC 3501 for search criteria syntax.
+//
+// Common examples:
+//   - "ALL" - all messages
+//   - "UNSEEN" - unread messages
+//   - "SEEN" - read messages
+//   - "1:10" - UIDs 1 through 10
+//   - "SINCE 1-Jan-2024" - messages since a date
+//
+// Note: For retrieving the N most recent messages, use GetLastNUIDs instead.
 func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
 	if err != nil {
 		return nil, err
 	}
 	return parseUIDSearchResponse(r)
+}
+
+// GetLastNUIDs returns the N messages with the highest UIDs in the selected folder.
+// This is useful for fetching the most recent messages.
+//
+// Example:
+//
+//	// Get the 10 most recent messages
+//	uids, err := conn.GetLastNUIDs(10)
+func (d *Dialer) GetLastNUIDs(n int) ([]int, error) {
+	if n <= 0 {
+		return nil, nil
+	}
+	allUIDs, err := d.GetUIDs("ALL")
+	if err != nil {
+		return nil, err
+	}
+	if len(allUIDs) <= n {
+		return allUIDs, nil
+	}
+	return allUIDs[len(allUIDs)-n:], nil
 }
 
 // MoveEmail moves an email to a different folder

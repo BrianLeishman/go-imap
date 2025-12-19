@@ -347,11 +347,13 @@ textUIDs, _ := m.GetUIDs(`TEXT "urgent"`) // Searches both subject and body
 // Complex searches
 complexUIDs, _ := m.GetUIDs(`UNSEEN FROM "support@github.com" SINCE 1-Sep-2024`)
 
-// UID ranges
-firstUID, _ := m.GetUIDs("1")          // First email
-lastUID, _ := m.GetUIDs("*")           // Last email
-rangeUIDs, _ := m.GetUIDs("1:10")      // First 10 emails
-last10UIDs, _ := m.GetUIDs("*:10")     // Last 10 emails (reverse)
+// UID ranges (raw IMAP syntax)
+firstUID, _ := m.GetUIDs("1")          // UID 1 only
+lastUID, _ := m.GetUIDs("*")           // Highest UID only
+rangeUIDs, _ := m.GetUIDs("1:10")      // UIDs 1 through 10
+
+// Get the N most recent messages (recommended for "last N" queries)
+last10UIDs, _ := m.GetLastNUIDs(10)    // Last 10 messages by UID
 
 // Size-based searches
 largeUIDs, _ := m.GetUIDs("LARGER 10485760")  // Emails larger than 10MB
