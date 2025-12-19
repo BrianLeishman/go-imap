@@ -92,6 +92,47 @@ func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
 	return emails, nil
 }
 
+func TestGetLastNUIDs_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	// Test cases that don't require a network connection
+	// (the n <= 0 check happens before any IMAP call)
+	d := &Dialer{}
+
+	t.Run("n=0 returns nil", func(t *testing.T) {
+		t.Parallel()
+		result, err := d.GetLastNUIDs(0)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("n=-1 returns nil", func(t *testing.T) {
+		t.Parallel()
+		result, err := d.GetLastNUIDs(-1)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("n=-100 returns nil", func(t *testing.T) {
+		t.Parallel()
+		result, err := d.GetLastNUIDs(-100)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+}
+
 func TestEnvelopeAtomAddress(t *testing.T) {
 	name := "CBJ SAP SUPPORT INSIGHT"
 	env := &Token{Type: TContainer, Tokens: []*Token{

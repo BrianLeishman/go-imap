@@ -161,6 +161,10 @@ func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 // GetLastNUIDs returns the N messages with the highest UIDs in the selected folder.
 // This is useful for fetching the most recent messages.
 //
+// Note: This method fetches all UIDs from the server and returns the last N.
+// For mailboxes with many thousands of messages, consider using GetUIDs with
+// a specific UID range if you know the approximate UID values you need.
+//
 // Example:
 //
 //	// Get the 10 most recent messages

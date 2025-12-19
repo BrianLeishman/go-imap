@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/smtp"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,6 +17,9 @@ import (
 // Start one with: docker compose up -d
 //
 // Run tests with: go test -tags=integration -v ./...
+//
+// Note: These tests modify the global TLSSkipVerify variable and use a mutex
+// to prevent race conditions. Do not run with t.Parallel() at the top level.
 
 const (
 	testIMAPHost = "localhost"
@@ -25,6 +29,10 @@ const (
 	testUser     = "testuser@localhost"
 	testPass     = "testpass"
 )
+
+// tlsSkipVerifyMu protects access to the global TLSSkipVerify variable
+// to prevent race conditions when tests run concurrently.
+var tlsSkipVerifyMu sync.Mutex
 
 func getTestConfig() (host string, imapPort, smtpPort int) {
 	host = testIMAPHost
@@ -71,9 +79,13 @@ func setupTestConnection(t *testing.T) *Dialer {
 
 	// GreenMail uses non-TLS on port 3143, so we need to connect without TLS
 	// For now, let's use the TLS port with skip verify
+	tlsSkipVerifyMu.Lock()
 	oldSkipVerify := TLSSkipVerify
 	TLSSkipVerify = true
-	t.Cleanup(func() { TLSSkipVerify = oldSkipVerify })
+	t.Cleanup(func() {
+		TLSSkipVerify = oldSkipVerify
+		tlsSkipVerifyMu.Unlock()
+	})
 
 	// GreenMail creates users on first login attempt
 	// Try connecting to the IMAPS port (3993)
@@ -141,6 +153,16 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 		uids, err := conn.GetLastNUIDs(0)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(0) failed: %v", err)
+		}
+		if uids != nil {
+			t.Errorf("Expected nil, got %v", uids)
+		}
+	})
+
+	t.Run("GetLastNUIDs with negative n returns nil", func(t *testing.T) {
+		uids, err := conn.GetLastNUIDs(-5)
+		if err != nil {
+			t.Fatalf("GetLastNUIDs(-5) failed: %v", err)
 		}
 		if uids != nil {
 			t.Errorf("Expected nil, got %v", uids)
@@ -250,9 +272,13 @@ func TestIntegration_Connection(t *testing.T) {
 		t.Skipf("IMAP server not available: %v", err)
 	}
 
+	tlsSkipVerifyMu.Lock()
 	oldSkipVerify := TLSSkipVerify
 	TLSSkipVerify = true
-	defer func() { TLSSkipVerify = oldSkipVerify }()
+	defer func() {
+		TLSSkipVerify = oldSkipVerify
+		tlsSkipVerifyMu.Unlock()
+	}()
 
 	t.Run("Connect and authenticate", func(t *testing.T) {
 		conn, err := New(testUser, testPass, host, 3993)
