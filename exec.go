@@ -17,7 +17,13 @@ import (
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
-		tag := []byte(fmt.Sprintf("%X", xid.New()))
+		var tag []byte
+
+		if Tagger != nil {
+			tag = []byte(Tagger())
+		} else {
+			tag = []byte(fmt.Sprintf("%X", xid.New()))
+		}
 
 		if CommandTimeout != 0 {
 			_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))

@@ -33,3 +33,9 @@ var CommandTimeout time.Duration
 var TLSSkipVerify bool
 
 var lastResp string
+
+// Tagger is a function that returns a string which we can use as our tag
+// instead of the hexified XIDs in the default code.  This is necessary
+// to get through OpenResty's IMAP proxy (max 32 characters) and may be
+// helpful in debugging situations giving more control over tag format.
+var Tagger func() string
