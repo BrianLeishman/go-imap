@@ -11,7 +11,7 @@ require (
 	github.com/jhillyerd/enmime v1.3.0
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
-	golang.org/x/net v0.48.0
+	golang.org/x/net v0.49.0
 )
 
 require (
@@ -23,5 +23,5 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
 )
