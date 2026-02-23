@@ -278,12 +278,14 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 	// RECENT, etc.) from corrupting FETCH record parsing.
 	allLocs := untaggedResponseRE.FindAllStringIndex(trimmedResponseBody, -1)
 
+	var allLocsIdx int
 	for _, loc := range locs {
 		start := loc[0]
 		end := len(trimmedResponseBody)
-		for _, ul := range allLocs {
-			if ul[0] > start {
-				end = ul[0]
+		for j := allLocsIdx; j < len(allLocs); j++ {
+			if allLocs[j][0] > start {
+				end = allLocs[j][0]
+				allLocsIdx = j
 				break
 			}
 		}
