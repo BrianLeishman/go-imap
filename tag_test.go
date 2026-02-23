@@ -9,15 +9,11 @@ import (
 
 func TestTagFormat(t *testing.T) {
 	// Generate several tags to check properties
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tag := strings.ToUpper(xid.New().String())
 
 		if len(tag) != 20 {
 			t.Fatalf("expected tag length 20, got %d: %q", len(tag), tag)
-		}
-
-		if len(tag) > 32 {
-			t.Fatalf("tag exceeds 32-char IMAP proxy limit: %d chars: %q", len(tag), tag)
 		}
 
 		for _, c := range tag {
@@ -30,7 +26,7 @@ func TestTagFormat(t *testing.T) {
 
 func TestTagUniqueness(t *testing.T) {
 	seen := make(map[string]struct{})
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tag := strings.ToUpper(xid.New().String())
 		if _, ok := seen[tag]; ok {
 			t.Fatalf("duplicate tag generated: %q", tag)
