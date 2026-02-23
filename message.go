@@ -12,7 +12,7 @@ import (
 	retry "github.com/StirlingMarketingGroup/go-retry"
 	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
 	"golang.org/x/net/html/charset"
 )
 
