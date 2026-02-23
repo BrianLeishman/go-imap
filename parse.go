@@ -3,6 +3,7 @@ package imap
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -407,24 +408,17 @@ func (t Token) String() string {
 }
 
 // CheckType validates that a token is one of the acceptable types
-func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...interface{}) (err error) {
-	ok := false
-	for _, a := range acceptableTypes {
-		if token.Type == a {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		types := ""
-		for i, a := range acceptableTypes {
-			if i != 0 {
-				types += "|"
-			}
-			types += GetTokenName(a)
-		}
-		err = fmt.Errorf("IMAP%d:%s: expected %s token %s, got %+v in %v", d.ConnNum, d.Folder, types, fmt.Sprintf(loc, v...), token, tks)
+func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...any) (err error) {
+	if slices.Contains(acceptableTypes, token.Type) {
+		return nil
 	}
 
-	return err
+	var b strings.Builder
+	for i, a := range acceptableTypes {
+		if i != 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString(GetTokenName(a))
+	}
+	return fmt.Errorf("IMAP%d:%s: expected %s token %s, got %+v in %v", d.ConnNum, d.Folder, b.String(), fmt.Sprintf(loc, v...), token, tks)
 }
