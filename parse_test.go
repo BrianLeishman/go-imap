@@ -260,28 +260,111 @@ func TestParseUIDSearchResponse(t *testing.T) {
 
 func TestParseFetchResponse(t *testing.T) {
 	d := &Dialer{}
-	resp := "* 1 FETCH (UID 7 FLAGS (\\Seen))\r\n"
-	recs, err := d.ParseFetchResponse(resp)
-	if err != nil {
-		t.Fatalf("ParseFetchResponse error: %v", err)
-	}
-	if len(recs) != 1 {
-		t.Fatalf("expected 1 record got %d", len(recs))
-	}
-	r := recs[0]
-	if len(r) != 4 {
-		t.Fatalf("expected 4 tokens got %d", len(r))
-	}
-	if r[0].Type != TLiteral || r[0].Str != "UID" {
-		t.Errorf("unexpected token %#v", r[0])
-	}
-	if r[1].Type != TNumber || r[1].Num != 7 {
-		t.Errorf("unexpected token %#v", r[1])
-	}
-	if r[2].Type != TLiteral || r[2].Str != "FLAGS" {
-		t.Errorf("unexpected token %#v", r[2])
-	}
-	if r[3].Type != TContainer || len(r[3].Tokens) != 1 || r[3].Tokens[0].Str != "\\Seen" {
-		t.Errorf("unexpected token %#v", r[3])
-	}
+
+	t.Run("single record", func(t *testing.T) {
+		resp := "* 1 FETCH (UID 7 FLAGS (\\Seen))\r\n"
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 1 {
+			t.Fatalf("expected 1 record got %d", len(recs))
+		}
+		r := recs[0]
+		if len(r) != 4 {
+			t.Fatalf("expected 4 tokens got %d", len(r))
+		}
+		if r[0].Type != TLiteral || r[0].Str != "UID" {
+			t.Errorf("unexpected token %#v", r[0])
+		}
+		if r[1].Type != TNumber || r[1].Num != 7 {
+			t.Errorf("unexpected token %#v", r[1])
+		}
+		if r[2].Type != TLiteral || r[2].Str != "FLAGS" {
+			t.Errorf("unexpected token %#v", r[2])
+		}
+		if r[3].Type != TContainer || len(r[3].Tokens) != 1 || r[3].Tokens[0].Str != "\\Seen" {
+			t.Errorf("unexpected token %#v", r[3])
+		}
+	})
+
+	t.Run("EXPUNGE between FETCH records", func(t *testing.T) {
+		resp := "* 1 FETCH (UID 1 FLAGS (\\Seen))\r\n" +
+			"* 2 EXPUNGE\r\n" +
+			"* 3 FETCH (UID 54 FLAGS (\\Recent))\r\n"
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 2 {
+			t.Fatalf("expected 2 records got %d", len(recs))
+		}
+		// First record: UID 1
+		if recs[0][0].Type != TLiteral || recs[0][0].Str != "UID" {
+			t.Errorf("rec[0] token 0: expected UID literal, got %+v", recs[0][0])
+		}
+		if recs[0][1].Type != TNumber || recs[0][1].Num != 1 {
+			t.Errorf("rec[0] token 1: expected 1, got %+v", recs[0][1])
+		}
+		// Second record: UID 54
+		if recs[1][0].Type != TLiteral || recs[1][0].Str != "UID" {
+			t.Errorf("rec[1] token 0: expected UID literal, got %+v", recs[1][0])
+		}
+		if recs[1][1].Type != TNumber || recs[1][1].Num != 54 {
+			t.Errorf("rec[1] token 1: expected 54, got %+v", recs[1][1])
+		}
+	})
+
+	t.Run("multiple non-FETCH lines between records", func(t *testing.T) {
+		resp := "* 1 FETCH (UID 10 FLAGS (\\Seen))\r\n" +
+			"* 2 EXPUNGE\r\n" +
+			"* 5 EXISTS\r\n" +
+			"* 0 RECENT\r\n" +
+			"* 2 FETCH (UID 20 FLAGS (\\Draft))\r\n"
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 2 {
+			t.Fatalf("expected 2 records got %d", len(recs))
+		}
+		if recs[0][1].Type != TNumber || recs[0][1].Num != 10 {
+			t.Errorf("rec[0] UID: expected 10, got %+v", recs[0][1])
+		}
+		if recs[1][1].Type != TNumber || recs[1][1].Num != 20 {
+			t.Errorf("rec[1] UID: expected 20, got %+v", recs[1][1])
+		}
+	})
+
+	t.Run("non-FETCH lines after last FETCH", func(t *testing.T) {
+		resp := "* 1 FETCH (UID 5 FLAGS (\\Seen))\r\n" +
+			"* 2 EXPUNGE\r\n" +
+			"* 3 EXISTS\r\n"
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 1 {
+			t.Fatalf("expected 1 record got %d", len(recs))
+		}
+		if recs[0][1].Type != TNumber || recs[0][1].Num != 5 {
+			t.Errorf("rec[0] UID: expected 5, got %+v", recs[0][1])
+		}
+	})
+
+	t.Run("non-FETCH lines before first FETCH", func(t *testing.T) {
+		resp := "* 3 EXISTS\r\n" +
+			"* 0 RECENT\r\n" +
+			"* 1 FETCH (UID 42 FLAGS (\\Seen))\r\n"
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 1 {
+			t.Fatalf("expected 1 record got %d", len(recs))
+		}
+		if recs[0][1].Type != TNumber || recs[0][1].Num != 42 {
+			t.Errorf("rec[0] UID: expected 42, got %+v", recs[0][1])
+		}
+	})
 }

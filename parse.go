@@ -3,6 +3,7 @@ package imap
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -14,8 +15,9 @@ const (
 )
 
 var (
-	atom             = regexp.MustCompile(`{\d+}$`)
-	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	atom               = regexp.MustCompile(`{\d+}$`)
+	fetchLineStartRE   = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	untaggedResponseRE = regexp.MustCompile(`(?m)^\* `)
 )
 
 // Token represents a parsed IMAP token
@@ -271,11 +273,22 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 		return records, nil
 	}
 
-	for i, loc := range locs {
+	// Find all untagged response boundaries so we can stop each FETCH
+	// chunk at the next untagged response of any type, not just the next
+	// FETCH. This prevents interleaved notifications (EXPUNGE, EXISTS,
+	// RECENT, etc.) from corrupting FETCH record parsing.
+	allLocs := untaggedResponseRE.FindAllStringIndex(trimmedResponseBody, -1)
+
+	var allLocsIdx int
+	for _, loc := range locs {
 		start := loc[0]
 		end := len(trimmedResponseBody)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
+		for j := allLocsIdx; j < len(allLocs); j++ {
+			if allLocs[j][0] > start {
+				end = allLocs[j][0]
+				allLocsIdx = j
+				break
+			}
 		}
 		line := trimmedResponseBody[start:end]
 		currentLineToProcess := strings.TrimSpace(line)
@@ -395,24 +408,17 @@ func (t Token) String() string {
 }
 
 // CheckType validates that a token is one of the acceptable types
-func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...interface{}) (err error) {
-	ok := false
-	for _, a := range acceptableTypes {
-		if token.Type == a {
-			ok = true
-			break
-		}
-	}
-	if !ok {
-		types := ""
-		for i, a := range acceptableTypes {
-			if i != 0 {
-				types += "|"
-			}
-			types += GetTokenName(a)
-		}
-		err = fmt.Errorf("IMAP%d:%s: expected %s token %s, got %+v in %v", d.ConnNum, d.Folder, types, fmt.Sprintf(loc, v...), token, tks)
+func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...any) (err error) {
+	if slices.Contains(acceptableTypes, token.Type) {
+		return nil
 	}
 
-	return err
+	var b strings.Builder
+	for i, a := range acceptableTypes {
+		if i != 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString(GetTokenName(a))
+	}
+	return fmt.Errorf("IMAP%d:%s: expected %s token %s, got %+v in %v", d.ConnNum, d.Folder, b.String(), fmt.Sprintf(loc, v...), token, tks)
 }
