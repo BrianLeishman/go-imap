@@ -17,7 +17,7 @@ import (
 func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, processLine func(line []byte) error) (response string, err error) {
 	var resp strings.Builder
 	err = retry.Retry(func() (err error) {
-		tag := []byte(fmt.Sprintf("%X", xid.New()))
+		tag := []byte(strings.ToUpper(xid.New().String()))
 
 		if CommandTimeout != 0 {
 			_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
@@ -81,7 +81,7 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			// 	fmt.Println(f.Name())
 			// }
 
-			// XID project is returning 40-byte tags. The code was originally hardcoded 16 digits.
+			// XID tags are 20 uppercase base32hex characters (0-9, A-V).
 			taglen := len(tag)
 			oklen := 3
 			if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {

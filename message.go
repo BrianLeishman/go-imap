@@ -76,9 +76,9 @@ func (e EmailAddresses) String() string {
 		}
 		if len(n) != 0 {
 			if strings.ContainsRune(n, ',') {
-				emails.WriteString(fmt.Sprintf(`"%s" <%s>`, AddSlashes.Replace(n), e))
+				fmt.Fprintf(&emails, `"%s" <%s>`, AddSlashes.Replace(n), e)
 			} else {
-				emails.WriteString(fmt.Sprintf(`%s <%s>`, n, e))
+				fmt.Fprintf(&emails, `%s <%s>`, n, e)
 			}
 		} else {
 			emails.WriteString(e)
@@ -92,42 +92,42 @@ func (e EmailAddresses) String() string {
 func (e Email) String() string {
 	email := strings.Builder{}
 
-	email.WriteString(fmt.Sprintf("Subject: %s\n", e.Subject))
+	fmt.Fprintf(&email, "Subject: %s\n", e.Subject)
 
 	if len(e.To) != 0 {
-		email.WriteString(fmt.Sprintf("To: %s\n", e.To))
+		fmt.Fprintf(&email, "To: %s\n", e.To)
 	}
 	if len(e.From) != 0 {
-		email.WriteString(fmt.Sprintf("From: %s\n", e.From))
+		fmt.Fprintf(&email, "From: %s\n", e.From)
 	}
 	if len(e.CC) != 0 {
-		email.WriteString(fmt.Sprintf("CC: %s\n", e.CC))
+		fmt.Fprintf(&email, "CC: %s\n", e.CC)
 	}
 	if len(e.BCC) != 0 {
-		email.WriteString(fmt.Sprintf("BCC: %s\n", e.BCC))
+		fmt.Fprintf(&email, "BCC: %s\n", e.BCC)
 	}
 	if len(e.ReplyTo) != 0 {
-		email.WriteString(fmt.Sprintf("ReplyTo: %s\n", e.ReplyTo))
+		fmt.Fprintf(&email, "ReplyTo: %s\n", e.ReplyTo)
 	}
 	if len(e.Text) != 0 {
 		if len(e.Text) > 20 {
-			email.WriteString(fmt.Sprintf("Text: %s...", e.Text[:20]))
+			fmt.Fprintf(&email, "Text: %s...", e.Text[:20])
 		} else {
-			email.WriteString(fmt.Sprintf("Text: %s", e.Text))
+			fmt.Fprintf(&email, "Text: %s", e.Text)
 		}
-		email.WriteString(fmt.Sprintf("(%s)\n", humanize.Bytes(uint64(len(e.Text)))))
+		fmt.Fprintf(&email, "(%s)\n", humanize.Bytes(uint64(len(e.Text))))
 	}
 	if len(e.HTML) != 0 {
 		if len(e.HTML) > 20 {
-			email.WriteString(fmt.Sprintf("HTML: %s...", e.HTML[:20]))
+			fmt.Fprintf(&email, "HTML: %s...", e.HTML[:20])
 		} else {
-			email.WriteString(fmt.Sprintf("HTML: %s", e.HTML))
+			fmt.Fprintf(&email, "HTML: %s", e.HTML)
 		}
-		email.WriteString(fmt.Sprintf(" (%s)\n", humanize.Bytes(uint64(len(e.HTML)))))
+		fmt.Fprintf(&email, " (%s)\n", humanize.Bytes(uint64(len(e.HTML))))
 	}
 
 	if len(e.Attachments) != 0 {
-		email.WriteString(fmt.Sprintf("%d Attachment(s): %s\n", len(e.Attachments), e.Attachments))
+		fmt.Fprintf(&email, "%d Attachment(s): %s\n", len(e.Attachments), e.Attachments)
 	}
 
 	return email.String()
