@@ -14,8 +14,9 @@ const (
 )
 
 var (
-	atom             = regexp.MustCompile(`{\d+}$`)
-	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	atom               = regexp.MustCompile(`{\d+}$`)
+	fetchLineStartRE   = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	untaggedResponseRE = regexp.MustCompile(`(?m)^\* `)
 )
 
 // Token represents a parsed IMAP token
@@ -271,11 +272,20 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 		return records, nil
 	}
 
-	for i, loc := range locs {
+	// Find all untagged response boundaries so we can stop each FETCH
+	// chunk at the next untagged response of any type, not just the next
+	// FETCH. This prevents interleaved notifications (EXPUNGE, EXISTS,
+	// RECENT, etc.) from corrupting FETCH record parsing.
+	allLocs := untaggedResponseRE.FindAllStringIndex(trimmedResponseBody, -1)
+
+	for _, loc := range locs {
 		start := loc[0]
 		end := len(trimmedResponseBody)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
+		for _, ul := range allLocs {
+			if ul[0] > start {
+				end = ul[0]
+				break
+			}
 		}
 		line := trimmedResponseBody[start:end]
 		currentLineToProcess := strings.TrimSpace(line)
