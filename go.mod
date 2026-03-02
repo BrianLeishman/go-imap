@@ -1,6 +1,6 @@
 module github.com/BrianLeishman/go-imap
 
-go 1.25
+go 1.25.0
 
 toolchain go1.25.1
 
@@ -11,7 +11,7 @@ require (
 	github.com/jhillyerd/enmime/v2 v2.3.0
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
-	golang.org/x/net v0.50.0
+	golang.org/x/net v0.51.0
 )
 
 require (
