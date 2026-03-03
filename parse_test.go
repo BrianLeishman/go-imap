@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -365,6 +366,34 @@ func TestParseFetchResponse(t *testing.T) {
 		}
 		if recs[0][1].Type != TNumber || recs[0][1].Num != 42 {
 			t.Errorf("rec[0] UID: expected 42, got %+v", recs[0][1])
+		}
+	})
+
+	t.Run("BODY literal containing line that starts with untagged marker", func(t *testing.T) {
+		body := "Subject: test\r\n\r\n* literal line that looks like untagged response\r\n"
+		resp := fmt.Sprintf("* 1 FETCH (UID 78 BODY[] {%d}\r\n%s)\r\n", len(body), body)
+
+		recs, err := d.ParseFetchResponse(resp)
+		if err != nil {
+			t.Fatalf("ParseFetchResponse error: %v", err)
+		}
+		if len(recs) != 1 {
+			t.Fatalf("expected 1 record got %d", len(recs))
+		}
+		if len(recs[0]) != 4 {
+			t.Fatalf("expected 4 tokens got %d", len(recs[0]))
+		}
+		if recs[0][0].Type != TLiteral || recs[0][0].Str != "UID" {
+			t.Fatalf("expected token 0 to be UID literal, got %+v", recs[0][0])
+		}
+		if recs[0][1].Type != TNumber || recs[0][1].Num != 78 {
+			t.Fatalf("expected token 1 to be UID number 78, got %+v", recs[0][1])
+		}
+		if recs[0][2].Type != TLiteral || recs[0][2].Str != "BODY[]" {
+			t.Fatalf("expected token 2 to be BODY[] literal, got %+v", recs[0][2])
+		}
+		if recs[0][3].Type != TAtom || recs[0][3].Str != body {
+			t.Fatalf("expected token 3 to be BODY[] atom with full body, got %+v", recs[0][3])
 		}
 	})
 }

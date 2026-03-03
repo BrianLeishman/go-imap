@@ -15,9 +15,8 @@ const (
 )
 
 var (
-	atom               = regexp.MustCompile(`{\d+}$`)
-	fetchLineStartRE   = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
-	untaggedResponseRE = regexp.MustCompile(`(?m)^\* `)
+	atom             = regexp.MustCompile(`{\d+}$`)
+	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
 )
 
 // Token represents a parsed IMAP token
@@ -229,6 +228,100 @@ func parseFetchTokens(r string) ([]*Token, error) {
 	return tokens, nil
 }
 
+func findLineEnd(s string, start int) int {
+	lineEndRel := strings.Index(s[start:], nl)
+	if lineEndRel == -1 {
+		return len(s)
+	}
+	return start + lineEndRel
+}
+
+func findFetchContentEnd(s string, fetchContentStart int) (int, error) {
+	if fetchContentStart >= len(s) {
+		return len(s), nil
+	}
+
+	i := fetchContentStart
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= len(s) {
+		return len(s), nil
+	}
+	if s[i] != '(' {
+		return findLineEnd(s, fetchContentStart), nil
+	}
+
+	depth := 0
+	inQuoted := false
+	for i < len(s) {
+		b := s[i]
+
+		if inQuoted {
+			switch b {
+			case '\\':
+				if i+1 < len(s) {
+					i += 2
+					continue
+				}
+			case '"':
+				inQuoted = false
+			}
+			i++
+			continue
+		}
+
+		switch b {
+		case '"':
+			inQuoted = true
+			i++
+			continue
+		case '{':
+			j := i + 1
+			for j < len(s) && unicode.IsDigit(rune(s[j])) {
+				j++
+			}
+			if j > i+1 && j < len(s) && s[j] == '}' {
+				size, err := strconv.Atoi(s[i+1 : j])
+				if err != nil {
+					return 0, fmt.Errorf("parse literal size %q: %w", s[i+1:j], err)
+				}
+
+				i = j + 1
+				if i < len(s) && s[i] == '\r' {
+					i++
+				}
+				if i < len(s) && s[i] == '\n' {
+					i++
+				}
+				if i+size > len(s) {
+					return 0, fmt.Errorf("literal size %d exceeds remaining buffer (%d)", size, len(s)-i)
+				}
+				i += size
+				continue
+			}
+		case '(':
+			depth++
+			i++
+			continue
+		case ')':
+			if depth == 0 {
+				return 0, fmt.Errorf("unmatched ')' at char %d", i)
+			}
+			depth--
+			i++
+			if depth == 0 {
+				return i, nil
+			}
+			continue
+		}
+
+		i++
+	}
+
+	return 0, fmt.Errorf("unterminated FETCH response (unbalanced parentheses)")
+}
+
 // ParseFetchResponse parses a multi-line FETCH response
 func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, err error) {
 	records = make([][]*Token, 0)
@@ -273,55 +366,50 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 		return records, nil
 	}
 
-	// Find all untagged response boundaries so we can stop each FETCH
-	// chunk at the next untagged response of any type, not just the next
-	// FETCH. This prevents interleaved notifications (EXPUNGE, EXISTS,
-	// RECENT, etc.) from corrupting FETCH record parsing.
-	allLocs := untaggedResponseRE.FindAllStringIndex(trimmedResponseBody, -1)
-
-	var allLocsIdx int
+	parsedUntil := 0
 	for _, loc := range locs {
 		start := loc[0]
-		end := len(trimmedResponseBody)
-		for j := allLocsIdx; j < len(allLocs); j++ {
-			if allLocs[j][0] > start {
-				end = allLocs[j][0]
-				allLocsIdx = j
-				break
-			}
-		}
-		line := trimmedResponseBody[start:end]
-		currentLineToProcess := strings.TrimSpace(line)
-
-		if len(currentLineToProcess) == 0 {
+		if start < parsedUntil {
 			continue
 		}
 
-		if !strings.HasPrefix(currentLineToProcess, "* ") {
-			return nil, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %#v", currentLineToProcess)
+		if !strings.HasPrefix(trimmedResponseBody[start:], "* ") {
+			return nil, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
 		}
-		rest := currentLineToProcess[2:]
+
+		restStart := start + 2
+		rest := trimmedResponseBody[restStart:]
 		idx := strings.IndexByte(rest, ' ')
 		if idx == -1 {
-			return nil, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %#v", currentLineToProcess)
+			return nil, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
 		}
 
 		seqNumStr := rest[:idx]
 		if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
-			return nil, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, currentLineToProcess, convErr)
+			return nil, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]), convErr)
 		}
 
-		rest = strings.TrimSpace(rest[idx+1:])
-		if !strings.HasPrefix(rest, "FETCH ") {
-			return nil, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %#v", currentLineToProcess)
+		restAfterSeqStart := restStart + idx + 1
+		for restAfterSeqStart < len(trimmedResponseBody) && trimmedResponseBody[restAfterSeqStart] == ' ' {
+			restAfterSeqStart++
+		}
+		if !strings.HasPrefix(trimmedResponseBody[restAfterSeqStart:], "FETCH ") {
+			return nil, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
+		}
+		fetchContentStart := restAfterSeqStart + len("FETCH ")
+		fetchContentEnd, endErr := findFetchContentEnd(trimmedResponseBody, fetchContentStart)
+		if endErr != nil {
+			return nil, fmt.Errorf("failed to locate end of FETCH response from line [%s]: %w", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]), endErr)
 		}
 
-		fetchContent := rest[len("FETCH "):]
+		currentLineToProcess := strings.TrimSpace(trimmedResponseBody[start:fetchContentEnd])
+		fetchContent := trimmedResponseBody[fetchContentStart:fetchContentEnd]
 		tokens, err := parseFetchTokens(fetchContent)
 		if err != nil {
 			return nil, fmt.Errorf("token parsing failed for line part [%s] from original line [%s]: %w", fetchContent, currentLineToProcess, err)
 		}
 		records = append(records, tokens)
+		parsedUntil = fetchContentEnd
 	}
 	return records, nil
 }
