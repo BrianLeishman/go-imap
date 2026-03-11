@@ -2,6 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/BrianLeishman/go-imap.svg)](https://pkg.go.dev/github.com/BrianLeishman/go-imap)
 [![CI](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml/badge.svg)](https://github.com/BrianLeishman/go-imap/actions/workflows/go.yml)
+[![codecov](https://codecov.io/gh/BrianLeishman/go-imap/branch/master/graph/badge.svg)](https://codecov.io/gh/BrianLeishman/go-imap)
 [![Go Report Card](https://goreportcard.com/badge/github.com/BrianLeishman/go-imap)](https://goreportcard.com/report/github.com/BrianLeishman/go-imap)
 
 Simple, pragmatic IMAP client for Go (Golang) with TLS, LOGIN or XOAUTH2 (OAuth 2.0), IDLE notifications, robust reconnects, and batteries‑included helpers for searching, fetching, moving, and flagging messages.
