@@ -47,8 +47,11 @@ func (d *Dialer) Exec(command string, buildResponse bool, retryCount int, proces
 			for {
 				if a := atom.Find(dropNl(line)); a != nil {
 					// fmt.Printf("%s\n", a)
+					sizeStr := string(a[1 : len(a)-1])
+					// LITERAL+ (RFC 7888) uses {NNN+} syntax; strip trailing '+'
+					sizeStr = strings.TrimSuffix(sizeStr, "+")
 					var n int
-					n, err = strconv.Atoi(string(a[1 : len(a)-1]))
+					n, err = strconv.Atoi(sizeStr)
 					if err != nil {
 						return err
 					}

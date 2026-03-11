@@ -1,7 +1,9 @@
 name: Go CI
 
 on:
-  pull_request:        # runs on open, sync (new commits), and reopen
+  push:
+    branches: [ master ]
+  pull_request:
     branches: [ master ]
 
 jobs:
@@ -23,11 +25,12 @@ jobs:
       - name: Test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
 
-      - name: Upload coverage (artifact)
-        uses: actions/upload-artifact@v7
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          name: coverage
-          path: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: BrianLeishman/go-imap
+          files: coverage.out
 
       - name: GolangCI-Lint
         uses: golangci/golangci-lint-action@v9

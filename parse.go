@@ -15,7 +15,7 @@ const (
 )
 
 var (
-	atom             = regexp.MustCompile(`{\d+}$`)
+	atom             = regexp.MustCompile(`{\d+\+?}$`)
 	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
 )
 
@@ -143,8 +143,14 @@ func parseFetchTokens(r string) ([]*Token, error) {
 			switch {
 			case unicode.IsDigit(rune(b)):
 				// Still accumulating digits for size, main loop's i++ will advance
-			default: // Should be '}'
-				tokenEndOfSize := i // Current 'i' is at '}'
+			default: // Should be '}' or '+}' (LITERAL+, RFC 7888)
+				tokenEndOfSize := i // Current 'i' is at '}' or '+'
+				if b == '+' {
+					i++ // skip '+', now should be '}'
+					if i >= len(r) || r[i] != '}' {
+						return nil, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, r)
+					}
+				}
 				// tokenStart for size was set when '{' was seen. r[tokenStart:tokenEndOfSize] is the size string.
 				sizeVal, err := strconv.Atoi(string(r[tokenStart:tokenEndOfSize]))
 				if err != nil {
@@ -281,8 +287,16 @@ func findFetchContentEnd(s string, fetchContentStart int) (int, error) {
 			for j < len(s) && unicode.IsDigit(rune(s[j])) {
 				j++
 			}
+			// Support LITERAL+ (RFC 7888): {NNN+} syntax
+			if j < len(s) && s[j] == '+' {
+				j++
+			}
 			if j > i+1 && j < len(s) && s[j] == '}' {
-				size, err := strconv.Atoi(s[i+1 : j])
+				sizeEnd := j
+				if s[sizeEnd-1] == '+' {
+					sizeEnd--
+				}
+				size, err := strconv.Atoi(s[i+1 : sizeEnd])
 				if err != nil {
 					return 0, fmt.Errorf("parse literal size %q: %w", s[i+1:j], err)
 				}
