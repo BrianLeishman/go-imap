@@ -298,7 +298,7 @@ func findFetchContentEnd(s string, fetchContentStart int) (int, error) {
 				}
 				size, err := strconv.Atoi(s[i+1 : sizeEnd])
 				if err != nil {
-					return 0, fmt.Errorf("parse literal size %q: %w", s[i+1:j], err)
+					return 0, fmt.Errorf("parse literal size %q: %w", s[i+1:sizeEnd], err)
 				}
 
 				i = j + 1
