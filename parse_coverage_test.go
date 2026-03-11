@@ -253,6 +253,17 @@ func TestFindFetchContentEnd_LiteralExceedsBuffer(t *testing.T) {
 	}
 }
 
+func TestFindFetchContentEnd_LiteralSizeOverflow(t *testing.T) {
+	// Integer overflow makes Atoi fail even though the loop only collects digits
+	_, err := findFetchContentEnd("({99999999999999999999}\r\ndata)", 0)
+	if err == nil {
+		t.Fatal("expected error for overflowing literal size")
+	}
+	if !strings.Contains(err.Error(), "parse literal size") {
+		t.Errorf("expected parse literal size error, got: %v", err)
+	}
+}
+
 func TestFindFetchContentEnd_BraceNotLiteral(t *testing.T) {
 	// { not followed by digits+} — should be treated as regular char
 	end, err := findFetchContentEnd("({nodigits})", 0)
