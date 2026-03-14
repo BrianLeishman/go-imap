@@ -98,11 +98,13 @@ func main() {
 
 	firstUID, _ := m.GetUIDs("1")       // First email
 	lastUID, _ := m.GetUIDs("*")        // Last email
+	maxUID, _ := m.GetMaxUID()          // Last email (cheaper)
 	first10UIDs, _ := m.GetUIDs("1:10") // First 10 emails
 	last10UIDs, _ := m.GetUIDs("*:10")  // Last 10 emails (reverse)
 
 	fmt.Printf("First email UID: %v\n", firstUID)
 	fmt.Printf("Last email UID: %v\n", lastUID)
+	fmt.Printf("Last email UID (alt): %v\n", maxUID)
 	fmt.Printf("First 10 email UIDs: %v\n", first10UIDs)
 	if len(last10UIDs) <= 10 {
 		fmt.Printf("Last 10 email UIDs: %v\n", last10UIDs)

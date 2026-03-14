@@ -133,6 +133,23 @@ func TestGetLastNUIDs_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestParseMaxUID_re(t *testing.T) {
+	response := `COFFEE 121
+	some more random UID 122
+	some more random UID MAX 123
+	UID MAX 124
+	* ESEARCH (TAG "D6OVA9F5SOCMJIK7FEH0") UID MAX 387992
+	not me UID MAX 125
+	`
+	maxUID, err := parseMaxUIDSearchResponse(response)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if maxUID != 387992 {
+		t.Errorf("unexpected maxuid: %d", maxUID)
+	}
+}
+
 func TestEnvelopeAtomAddress(t *testing.T) {
 	name := "CBJ SAP SUPPORT INSIGHT"
 	env := &Token{Type: TContainer, Tokens: []*Token{

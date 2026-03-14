@@ -356,6 +356,9 @@ rangeUIDs, _ := m.GetUIDs("1:10")      // UIDs 1 through 10
 // Get the N most recent messages (recommended for "last N" queries)
 last10UIDs, _ := m.GetLastNUIDs(10)    // Last 10 messages by UID
 
+// Cheaper method to retrieve the latest UID (requires RFC-4731).
+maxUID, _ := m.GetMaxUID()             // Highest UID only
+
 // Size-based searches
 largeUIDs, _ := m.GetUIDs("LARGER 10485760")  // Emails larger than 10MB
 smallUIDs, _ := m.GetUIDs("SMALLER 1024")     // Emails smaller than 1KB

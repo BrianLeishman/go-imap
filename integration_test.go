@@ -204,6 +204,29 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 			}
 		}
 	})
+
+	// TODO: enable once test-imap server supports RFC-4731.
+	//  Currently fails with: "Search command not supported".
+	if (false) {
+		t.Run("GetMaxUID returns highest UID", func(t *testing.T) {
+			last1, err := conn.GetLastNUIDs(1)
+			if err != nil {
+				t.Fatalf("GetLastNUIDs(1) failed: %v", err)
+			}
+
+			maxUID, err := conn.GetMaxUID()
+			if err != nil {
+				t.Fatalf("GetMaxUID() failed: %v", err)
+			}
+
+			// last1 and maxUID must be identical.
+			// NOTE: depends on GetLastNUIDs correctness,
+			//       which is already tested above.
+			if maxUID != last1[0] {
+				t.Errorf("Mismatch on max uid: got %d, want %d", maxUID, last1[0])
+			}
+		})
+	}
 }
 
 func TestIntegration_GetUIDs_Ranges(t *testing.T) {

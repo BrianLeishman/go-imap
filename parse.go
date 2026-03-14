@@ -17,6 +17,7 @@ const (
 var (
 	atom             = regexp.MustCompile(`{\d+\+?}$`)
 	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	searchMaxUIDre   = regexp.MustCompile(`\* ESEARCH .* MAX \d+`)
 )
 
 // Token represents a parsed IMAP token
@@ -454,6 +455,35 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 	}
 
 	return nil, fmt.Errorf("invalid response: %q", strings.TrimSpace(r))
+}
+
+// Parse SEARCH RETURN(MAX) command response
+//
+// Expected response format (RFC 4731)
+//	C: A285 UID SEARCH RETURN (MAX) 1:5000
+//	S: * ESEARCH (TAG "A285") UID MAX 3800
+//	S: A285 OK SEARCH completed
+// ref https://www.rfc-editor.org/rfc/rfc4731.html#page-2
+func parseMaxUIDSearchResponse(r string) (int, error) {
+	normalized := strings.ReplaceAll(r, nl, "\n")
+	for rawLine := range strings.SplitSeq(normalized, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		if searchMaxUIDre.Match([]byte(line)) {
+			tokens := strings.Split(line, " ")
+			maxuid_str := tokens[len(tokens)-1]
+			maxuid, err := strconv.Atoi(maxuid_str)
+			if err != nil {
+				return 0, fmt.Errorf("parse max uid %q: %w", maxuid_str, err)
+			}
+			return maxuid, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no ESEARCH line. rfc4731 not supported?")
 }
 
 // IsLiteral checks if a rune is valid for a literal token
