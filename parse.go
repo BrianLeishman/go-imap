@@ -488,14 +488,16 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 		}
 
 		// Check for ESEARCH line without a valid MAX capture
-		upper := strings.ToUpper(line)
-		if len(line) > 2 && strings.EqualFold(line[:2], "* ") && strings.Contains(upper, "ESEARCH") {
-			// If MAX keyword is present but didn't match \d+, that's malformed
-			if strings.Contains(upper, " MAX ") {
-				return 0, fmt.Errorf("malformed ESEARCH MAX value in: %q", line)
+		if len(line) > 2 && line[:2] == "* " {
+			upper := strings.ToUpper(line)
+			if strings.Contains(upper, "ESEARCH") {
+				// If MAX keyword is present but didn't match \d+, that's malformed
+				if strings.Contains(upper, " MAX ") {
+					return 0, fmt.Errorf("malformed ESEARCH MAX value in: %q", line)
+				}
+				// ESEARCH present without MAX means empty result set (RFC 4731)
+				return 0, nil
 			}
-			// ESEARCH present without MAX means empty result set (RFC 4731)
-			return 0, nil
 		}
 	}
 
