@@ -184,6 +184,28 @@ func TestParseMaxUIDSearchResponse(t *testing.T) {
 			t.Fatal("expected error for non-numeric MAX value")
 		}
 	})
+
+	t.Run("MAX not last token in ESEARCH", func(t *testing.T) {
+		response := "* ESEARCH (TAG \"A285\") UID MIN 1 MAX 3800 COUNT 50\r\n"
+		maxUID, err := parseMaxUIDSearchResponse(response)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if maxUID != 3800 {
+			t.Errorf("unexpected maxuid: got %d, want 3800", maxUID)
+		}
+	})
+
+	t.Run("case insensitive ESEARCH", func(t *testing.T) {
+		response := "* esearch (TAG \"A285\") uid max 4200\r\n"
+		maxUID, err := parseMaxUIDSearchResponse(response)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if maxUID != 4200 {
+			t.Errorf("unexpected maxuid: got %d, want 4200", maxUID)
+		}
+	})
 }
 
 func TestEnvelopeAtomAddress(t *testing.T) {

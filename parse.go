@@ -17,7 +17,7 @@ const (
 var (
 	atom             = regexp.MustCompile(`{\d+\+?}$`)
 	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
-	searchMaxUIDre   = regexp.MustCompile(`\* ESEARCH .* MAX \d+`)
+	searchMaxUIDRE   = regexp.MustCompile(`(?i)\* ESEARCH .* MAX (\d+)`)
 )
 
 // Token represents a parsed IMAP token
@@ -472,12 +472,10 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 			continue
 		}
 
-		if searchMaxUIDre.Match([]byte(line)) {
-			tokens := strings.Fields(line)
-			maxUIDStr := tokens[len(tokens)-1]
-			maxUID, err := strconv.Atoi(maxUIDStr)
+		if matches := searchMaxUIDRE.FindStringSubmatch(line); len(matches) > 1 {
+			maxUID, err := strconv.Atoi(matches[1])
 			if err != nil {
-				return 0, fmt.Errorf("parse max uid %q: %w", maxUIDStr, err)
+				return 0, fmt.Errorf("parse max uid %q: %w", matches[1], err)
 			}
 			return maxUID, nil
 		}
