@@ -206,6 +206,17 @@ func TestParseMaxUIDSearchResponse(t *testing.T) {
 			t.Errorf("unexpected maxuid: got %d, want 4200", maxUID)
 		}
 	})
+
+	t.Run("empty mailbox ESEARCH without MAX returns zero", func(t *testing.T) {
+		response := "* ESEARCH (TAG \"A285\") UID\r\nA285 OK SEARCH completed\r\n"
+		maxUID, err := parseMaxUIDSearchResponse(response)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if maxUID != 0 {
+			t.Errorf("expected 0 for empty mailbox, got %d", maxUID)
+		}
+	})
 }
 
 func TestEnvelopeAtomAddress(t *testing.T) {

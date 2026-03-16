@@ -356,7 +356,8 @@ rangeUIDs, _ := m.GetUIDs("1:10")      // UIDs 1 through 10
 // Get the N most recent messages (recommended for "last N" queries)
 last10UIDs, _ := m.GetLastNUIDs(10)    // Last 10 messages by UID
 
-// Cheaper method to retrieve the latest UID (requires RFC-4731).
+// Cheaper method to retrieve the latest UID (requires RFC-4731;
+// not all servers support this — check the error).
 maxUID, _ := m.GetMaxUID()             // Highest UID only
 
 // Size-based searches
