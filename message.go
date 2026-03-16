@@ -183,6 +183,18 @@ func (d *Dialer) GetLastNUIDs(n int) ([]int, error) {
 	return allUIDs[len(allUIDs)-n:], nil
 }
 
+// Get max UID in the current folder using RFC-4731.
+//
+// The folder of interest must be already selected in either read-only mode,
+// ExamineFolder, or in read-write mode, SelectFolder.
+func (d *Dialer) GetMaxUID() (uid int, err error) {
+	r, err := d.Exec("UID SEARCH RETURN (MAX) 1:*", true, RetryCount, nil)
+	if err != nil {
+		return 0, err
+	}
+	return parseMaxUIDSearchResponse(r)
+}
+
 // MoveEmail moves an email to a different folder
 func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation

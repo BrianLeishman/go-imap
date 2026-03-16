@@ -3,3 +3,4 @@ imap.exe
 .devcontainer
 .vscode/settings.json
 coverage.out
+*.sw?

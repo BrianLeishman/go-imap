@@ -17,6 +17,7 @@ const (
 var (
 	atom             = regexp.MustCompile(`{\d+\+?}$`)
 	fetchLineStartRE = regexp.MustCompile(`(?m)^\* \d+ FETCH`)
+	searchMaxUIDRE   = regexp.MustCompile(`(?i)\* ESEARCH .* MAX (\d+)`)
 )
 
 // Token represents a parsed IMAP token
@@ -454,6 +455,53 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 	}
 
 	return nil, fmt.Errorf("invalid response: %q", strings.TrimSpace(r))
+}
+
+// Parse SEARCH RETURN(MAX) command response
+//
+// Expected response format (RFC 4731)
+//
+//	C: A285 UID SEARCH RETURN (MAX) 1:5000
+//	S: * ESEARCH (TAG "A285") UID MAX 3800
+//	S: A285 OK SEARCH completed
+//
+// When the mailbox is empty, RFC 4731 omits MAX from the ESEARCH line:
+//
+//	S: * ESEARCH (TAG "A285") UID
+//
+// In that case this function returns 0, nil.
+// ref https://www.rfc-editor.org/rfc/rfc4731.html#page-2
+func parseMaxUIDSearchResponse(r string) (int, error) {
+	normalized := strings.ReplaceAll(r, nl, "\n")
+	for rawLine := range strings.SplitSeq(normalized, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		if matches := searchMaxUIDRE.FindStringSubmatch(line); len(matches) > 1 {
+			maxUID, err := strconv.Atoi(matches[1])
+			if err != nil {
+				return 0, fmt.Errorf("parse max uid %q: %w", matches[1], err)
+			}
+			return maxUID, nil
+		}
+
+		// Check for ESEARCH line without a valid MAX capture
+		if len(line) > 2 && line[:2] == "* " {
+			upper := strings.ToUpper(line)
+			if strings.Contains(upper, "ESEARCH") {
+				// If MAX keyword is present but didn't match \d+, that's malformed
+				if strings.Contains(upper, " MAX ") {
+					return 0, fmt.Errorf("malformed ESEARCH MAX value in: %q", line)
+				}
+				// ESEARCH present without MAX means empty result set (RFC 4731)
+				return 0, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("no ESEARCH line. rfc4731 not supported?")
 }
 
 // IsLiteral checks if a rune is valid for a literal token
