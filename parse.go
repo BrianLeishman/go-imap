@@ -473,13 +473,13 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 		}
 
 		if searchMaxUIDre.Match([]byte(line)) {
-tokens := strings.Fields(line)
-maxUIDStr := tokens[len(tokens)-1]
-maxUID, err := strconv.Atoi(maxUIDStr)
-if err != nil {
-	return 0, fmt.Errorf("parse max uid %q: %w", maxUIDStr, err)
-}
-return maxUID, nil
+			tokens := strings.Fields(line)
+			maxUIDStr := tokens[len(tokens)-1]
+			maxUID, err := strconv.Atoi(maxUIDStr)
+			if err != nil {
+				return 0, fmt.Errorf("parse max uid %q: %w", maxUIDStr, err)
+			}
+			return maxUID, nil
 		}
 	}
 

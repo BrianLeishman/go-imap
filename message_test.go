@@ -133,21 +133,57 @@ func TestGetLastNUIDs_EdgeCases(t *testing.T) {
 	})
 }
 
-func TestParseMaxUID_re(t *testing.T) {
-	response := `COFFEE 121
+func TestParseMaxUIDSearchResponse(t *testing.T) {
+	t.Run("valid ESEARCH response", func(t *testing.T) {
+		response := `COFFEE 121
 	some more random UID 122
 	some more random UID MAX 123
 	UID MAX 124
 	* ESEARCH (TAG "D6OVA9F5SOCMJIK7FEH0") UID MAX 387992
 	not me UID MAX 125
 	`
-	maxUID, err := parseMaxUIDSearchResponse(response)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if maxUID != 387992 {
-		t.Errorf("unexpected maxuid: %d", maxUID)
-	}
+		maxUID, err := parseMaxUIDSearchResponse(response)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if maxUID != 387992 {
+			t.Errorf("unexpected maxuid: got %d, want 387992", maxUID)
+		}
+	})
+
+	t.Run("minimal ESEARCH response", func(t *testing.T) {
+		response := "* ESEARCH (TAG \"A285\") UID MAX 3800\r\nA285 OK SEARCH completed\r\n"
+		maxUID, err := parseMaxUIDSearchResponse(response)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if maxUID != 3800 {
+			t.Errorf("unexpected maxuid: got %d, want 3800", maxUID)
+		}
+	})
+
+	t.Run("no ESEARCH line returns error", func(t *testing.T) {
+		response := "A285 OK SEARCH completed\r\n"
+		_, err := parseMaxUIDSearchResponse(response)
+		if err == nil {
+			t.Fatal("expected error for response without ESEARCH line")
+		}
+	})
+
+	t.Run("empty response returns error", func(t *testing.T) {
+		_, err := parseMaxUIDSearchResponse("")
+		if err == nil {
+			t.Fatal("expected error for empty response")
+		}
+	})
+
+	t.Run("ESEARCH with non-numeric MAX returns error", func(t *testing.T) {
+		response := "* ESEARCH (TAG \"A285\") UID MAX notanumber\r\n"
+		_, err := parseMaxUIDSearchResponse(response)
+		if err == nil {
+			t.Fatal("expected error for non-numeric MAX value")
+		}
+	})
 }
 
 func TestEnvelopeAtomAddress(t *testing.T) {
