@@ -61,6 +61,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	r := bufio.NewReader(d.conn)
 	line, err := r.ReadBytes('\n')
 	if err != nil {
+		_ = d.Close()
 		return fmt.Errorf("imap append read continuation: %w", err)
 	}
 
@@ -75,10 +76,12 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	// Phase 3: Send the literal message bytes
 	_, err = d.conn.Write(message)
 	if err != nil {
+		_ = d.Close()
 		return fmt.Errorf("imap append write literal: %w", err)
 	}
 	_, err = d.conn.Write([]byte("\r\n"))
 	if err != nil {
+		_ = d.Close()
 		return fmt.Errorf("imap append write crlf: %w", err)
 	}
 
@@ -87,6 +90,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	for {
 		line, err = r.ReadBytes('\n')
 		if err != nil {
+			_ = d.Close()
 			return fmt.Errorf("imap append read response: %w", err)
 		}
 

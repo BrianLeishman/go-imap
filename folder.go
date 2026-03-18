@@ -95,8 +95,9 @@ func (d *Dialer) selectAndGetCount(folder string) (int, error) {
 }
 
 // CreateFolder creates a new mailbox with the given name.
+// This command is not retried because CREATE is not idempotent.
 func (d *Dialer) CreateFolder(name string) error {
-	_, err := d.Exec(`CREATE "`+AddSlashes.Replace(name)+`"`, false, RetryCount, nil)
+	_, err := d.Exec(`CREATE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap create folder: %w", err)
 	}
@@ -105,8 +106,9 @@ func (d *Dialer) CreateFolder(name string) error {
 
 // DeleteFolder permanently removes a mailbox.
 // If the deleted folder is currently selected, the folder state is cleared.
+// This command is not retried because DELETE is not idempotent.
 func (d *Dialer) DeleteFolder(name string) error {
-	_, err := d.Exec(`DELETE "`+AddSlashes.Replace(name)+`"`, false, RetryCount, nil)
+	_, err := d.Exec(`DELETE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap delete folder: %w", err)
 	}
@@ -119,8 +121,9 @@ func (d *Dialer) DeleteFolder(name string) error {
 
 // RenameFolder renames a mailbox from oldName to newName.
 // If the renamed folder is currently selected, the tracked folder name is updated.
+// This command is not retried because RENAME is not idempotent.
 func (d *Dialer) RenameFolder(oldName, newName string) error {
-	_, err := d.Exec(`RENAME "`+AddSlashes.Replace(oldName)+`" "`+AddSlashes.Replace(newName)+`"`, false, RetryCount, nil)
+	_, err := d.Exec(`RENAME "`+AddSlashes.Replace(oldName)+`" "`+AddSlashes.Replace(newName)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap rename folder: %w", err)
 	}

@@ -29,15 +29,22 @@ func Search() *SearchBuilder {
 
 // Build returns the assembled IMAP SEARCH criteria string.
 // If no criteria have been added, it returns "ALL".
+// CHARSET UTF-8 is prepended when any criterion contains non-ASCII text.
 func (s *SearchBuilder) Build() string {
+	raw := s.buildRaw()
+	if s.needsCharset {
+		return "CHARSET UTF-8 " + raw
+	}
+	return raw
+}
+
+// buildRaw returns criteria without the CHARSET prefix.
+// Used by Not/Or to avoid emitting CHARSET inside nested search keys.
+func (s *SearchBuilder) buildRaw() string {
 	if len(s.criteria) == 0 {
 		return "ALL"
 	}
-	prefix := ""
-	if s.needsCharset {
-		prefix = "CHARSET UTF-8 "
-	}
-	return prefix + strings.Join(s.criteria, " ")
+	return strings.Join(s.criteria, " ")
 }
 
 // SearchUIDs executes a search using the builder and returns matching UIDs.
@@ -279,7 +286,7 @@ func (s *SearchBuilder) UID(set string) *SearchBuilder {
 //	// Messages NOT from alice
 //	Search().Not(Search().From("alice@example.com"))
 func (s *SearchBuilder) Not(inner *SearchBuilder) *SearchBuilder {
-	s.criteria = append(s.criteria, "NOT ("+inner.Build()+")")
+	s.criteria = append(s.criteria, "NOT ("+inner.buildRaw()+")")
 	if inner.needsCharset {
 		s.needsCharset = true
 	}
@@ -294,7 +301,7 @@ func (s *SearchBuilder) Not(inner *SearchBuilder) *SearchBuilder {
 //	// Messages from alice OR bob
 //	Search().Or(Search().From("alice"), Search().From("bob"))
 func (s *SearchBuilder) Or(a, b *SearchBuilder) *SearchBuilder {
-	s.criteria = append(s.criteria, fmt.Sprintf("OR (%s) (%s)", a.Build(), b.Build()))
+	s.criteria = append(s.criteria, fmt.Sprintf("OR (%s) (%s)", a.buildRaw(), b.buildRaw()))
 	if a.needsCharset || b.needsCharset {
 		s.needsCharset = true
 	}

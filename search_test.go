@@ -164,7 +164,7 @@ func TestSearchBuilder_Build(t *testing.T) {
 		{
 			name:     "or with non-ASCII propagates charset",
 			builder:  Search().Or(Search().Subject("тест"), Search().Unseen()),
-			expected: "CHARSET UTF-8 OR (CHARSET UTF-8 SUBJECT {8}\r\nтест) (UNSEEN)",
+			expected: "CHARSET UTF-8 OR (SUBJECT {8}\r\nтест) (UNSEEN)",
 		},
 		{
 			name:     "all",
@@ -179,7 +179,7 @@ func TestSearchBuilder_Build(t *testing.T) {
 		{
 			name:     "not with non-ASCII propagates charset",
 			builder:  Search().Not(Search().Subject("日報")),
-			expected: "CHARSET UTF-8 NOT (CHARSET UTF-8 SUBJECT {6}\r\n日報)",
+			expected: "CHARSET UTF-8 NOT (SUBJECT {6}\r\n日報)",
 		},
 	}
 
