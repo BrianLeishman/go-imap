@@ -10,6 +10,30 @@ import (
 	"github.com/rs/xid"
 )
 
+// waitForTaggedOK reads lines from r until it finds the tagged response matching tag.
+// It returns nil if the response is OK, or an error otherwise.
+func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
+	taglen := len(tag)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			_ = d.Close()
+			return fmt.Errorf("imap append read response: %w", err)
+		}
+
+		if Verbose && !SkipResponses {
+			debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
+		}
+
+		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
+			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
+				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
+			}
+			return nil
+		}
+	}
+}
+
 // Append uploads a message to the specified folder.
 //
 // The flags parameter specifies initial flags for the message (e.g., `\Seen`, `\Draft`).
@@ -86,23 +110,5 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	}
 
 	// Phase 4: Read the tagged response
-	taglen := len(tag)
-	for {
-		line, err = r.ReadBytes('\n')
-		if err != nil {
-			_ = d.Close()
-			return fmt.Errorf("imap append read response: %w", err)
-		}
-
-		if Verbose && !SkipResponses {
-			debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
-		}
-
-		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
-			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
-			}
-			return nil
-		}
-	}
+	return d.waitForTaggedOK(r, tag)
 }

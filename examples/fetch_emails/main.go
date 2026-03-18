@@ -8,40 +8,27 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func main() {
-	// Connect to server
+func connectAndSelectInbox() (*imap.Dialer, error) {
 	m, err := imap.New("username", "password", "mail.server.com", 993)
 	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
-	defer func() {
-		if err := m.Close(); err != nil {
-			log.Printf("Failed to close connection: %v", err)
-		}
-	}()
 
 	err = m.SelectFolder("INBOX")
 	if err != nil {
-		log.Fatalf("Failed to select INBOX: %v", err)
+		m.Close()
+		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
 
-	uids, err := m.GetUIDs("1:5") // Get first 5 emails
-	if err != nil {
-		log.Fatalf("Failed to get UIDs: %v", err)
-	}
+	return m, nil
+}
 
-	if len(uids) == 0 {
-		fmt.Println("No emails found in INBOX")
-		return
-	}
-
-	fmt.Printf("Found %d emails to fetch\n\n", len(uids))
-
+func fetchOverviews(m *imap.Dialer, uids []int) error {
 	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===")
 
 	overviews, err := m.GetOverviews(uids...)
 	if err != nil {
-		log.Fatalf("Failed to get overviews: %v", err)
+		return fmt.Errorf("failed to get overviews: %w", err)
 	}
 
 	for uid, email := range overviews {
@@ -54,6 +41,51 @@ func main() {
 		fmt.Println()
 	}
 
+	return nil
+}
+
+func printEmailBody(email *imap.Email) {
+	if len(email.Text) > 0 {
+		preview := email.Text
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		// Clean up whitespace for display
+		preview = strings.TrimSpace(preview)
+		preview = strings.ReplaceAll(preview, "\n\n\n", "\n\n")
+		fmt.Printf("\nText Preview:\n%s\n", preview)
+		fmt.Printf("(Total text length: %d characters)\n", len(email.Text))
+	}
+
+	if len(email.HTML) > 0 {
+		fmt.Printf("\nHTML content present: %d bytes (%.1f KB)\n",
+			len(email.HTML), float64(len(email.HTML))/1024)
+		htmlPreview := email.HTML
+		if len(htmlPreview) > 100 {
+			htmlPreview = htmlPreview[:100] + "..."
+		}
+		fmt.Printf("HTML Preview: %s\n", htmlPreview)
+	}
+}
+
+func printAttachments(email *imap.Email) {
+	if len(email.Attachments) > 0 {
+		fmt.Printf("\nAttachments (%d):\n", len(email.Attachments))
+		totalSize := 0
+		for i, att := range email.Attachments {
+			fmt.Printf("  %d. %s\n", i+1, att.Name)
+			fmt.Printf("     - MIME Type: %s\n", att.MimeType)
+			fmt.Printf("     - Size: %d bytes (%.1f KB)\n",
+				len(att.Content), float64(len(att.Content))/1024)
+			totalSize += len(att.Content)
+		}
+		fmt.Printf("  Total attachments size: %.1f KB\n", float64(totalSize)/1024)
+	} else {
+		fmt.Println("\nNo attachments")
+	}
+}
+
+func fetchFullEmails(m *imap.Dialer, uids []int) (map[int]*imap.Email, error) {
 	fmt.Println("=== Fetching Full Emails (With Bodies - SLOWER) ===")
 
 	// Limit to first 3 for full fetch (to keep example fast)
@@ -64,7 +96,7 @@ func main() {
 
 	emails, err := m.GetEmails(fetchUIDs...)
 	if err != nil {
-		log.Fatalf("Failed to get emails: %v", err)
+		return nil, fmt.Errorf("failed to get emails: %w", err)
 	}
 
 	for uid, email := range emails {
@@ -81,58 +113,26 @@ func main() {
 		fmt.Printf("Flags: %v\n", email.Flags)
 		fmt.Printf("Size: %d bytes (%.1f KB)\n", email.Size, float64(email.Size)/1024)
 
-		if len(email.Text) > 0 {
-			preview := email.Text
-			if len(preview) > 200 {
-				preview = preview[:200] + "..."
-			}
-			// Clean up whitespace for display
-			preview = strings.TrimSpace(preview)
-			preview = strings.ReplaceAll(preview, "\n\n\n", "\n\n")
-			fmt.Printf("\nText Preview:\n%s\n", preview)
-			fmt.Printf("(Total text length: %d characters)\n", len(email.Text))
-		}
-
-		if len(email.HTML) > 0 {
-			fmt.Printf("\nHTML content present: %d bytes (%.1f KB)\n",
-				len(email.HTML), float64(len(email.HTML))/1024)
-			// Show first 100 chars of HTML
-			htmlPreview := email.HTML
-			if len(htmlPreview) > 100 {
-				htmlPreview = htmlPreview[:100] + "..."
-			}
-			fmt.Printf("HTML Preview: %s\n", htmlPreview)
-		}
-
-		// Attachments
-		if len(email.Attachments) > 0 {
-			fmt.Printf("\nAttachments (%d):\n", len(email.Attachments))
-			totalSize := 0
-			for i, att := range email.Attachments {
-				fmt.Printf("  %d. %s\n", i+1, att.Name)
-				fmt.Printf("     - MIME Type: %s\n", att.MimeType)
-				fmt.Printf("     - Size: %d bytes (%.1f KB)\n",
-					len(att.Content), float64(len(att.Content))/1024)
-				totalSize += len(att.Content)
-			}
-			fmt.Printf("  Total attachments size: %.1f KB\n", float64(totalSize)/1024)
-		} else {
-			fmt.Println("\nNo attachments")
-		}
+		printEmailBody(email)
+		printAttachments(email)
 
 		fmt.Println("\n" + strings.Repeat("-", 50))
 	}
 
+	return emails, nil
+}
+
+func printEmailSummaries(emails map[int]*imap.Email) {
 	fmt.Println("\n=== Using the String() Method ===")
 
-	// The String() method provides a quick summary
 	for uid, email := range emails {
 		fmt.Printf("UID %d summary:\n", uid)
 		fmt.Print(email)
 		fmt.Println()
 	}
+}
 
-	// Example of processing attachments
+func processAttachments(emails map[int]*imap.Email) {
 	fmt.Println("\n=== Processing Attachments Example ===")
 
 	for uid, email := range emails {
@@ -155,4 +155,40 @@ func main() {
 			break // Just show first email with attachments
 		}
 	}
+}
+
+func main() {
+	m, err := connectAndSelectInbox()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
+
+	uids, err := m.GetUIDs("1:5") // Get first 5 emails
+	if err != nil {
+		log.Fatalf("Failed to get UIDs: %v", err)
+	}
+
+	if len(uids) == 0 {
+		fmt.Println("No emails found in INBOX")
+		return
+	}
+
+	fmt.Printf("Found %d emails to fetch\n\n", len(uids))
+
+	if err := fetchOverviews(m, uids); err != nil {
+		log.Fatal(err)
+	}
+
+	emails, err := fetchFullEmails(m, uids)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	printEmailSummaries(emails)
+	processAttachments(emails)
 }

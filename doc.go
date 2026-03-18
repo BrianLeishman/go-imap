@@ -15,4 +15,3 @@
 // The API is intentionally small and easy to adopt without pulling in a full
 // IMAP stack. See the README for end-to-end examples and guidance.
 package imap
-
