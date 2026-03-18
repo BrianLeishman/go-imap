@@ -213,6 +213,25 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 	return nil
 }
 
+// CopyEmail copies an email to a different folder.
+// Unlike MoveEmail, the original message remains in the current folder.
+// UID COPY is not retried because duplicating a message is not idempotent.
+func (d *Dialer) CopyEmail(uid int, folder string) error {
+	readOnlyState := d.ReadOnly
+	if readOnlyState {
+		if err := d.SelectFolder(d.Folder); err != nil {
+			return err
+		}
+	}
+	_, err := d.Exec(`UID COPY `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
+	if readOnlyState {
+		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+			err = e
+		}
+	}
+	return err
+}
+
 // MarkSeen marks an email as seen/read
 func (d *Dialer) MarkSeen(uid int) (err error) {
 	flags := Flags{

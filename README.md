@@ -13,12 +13,12 @@ Works great with Gmail, Office 365/Exchange, and most RFC‑compliant IMAP serve
 
 - TLS connections and timeouts (`DialTimeout`, `CommandTimeout`)
 - Authentication via `LOGIN` and `XOAUTH2`
-- Folders: `SELECT`/`EXAMINE`, list folders, error-tolerant counting
-- Search: `UID SEARCH` helpers with RFC 3501 literal syntax for non-ASCII text
+- Folders: list, select/examine, create, delete, rename, error-tolerant counting
+- Search: `UID SEARCH` helpers, type-safe `SearchBuilder` with fluent API, RFC 3501 literal syntax for non-ASCII text
 - Fetch: envelope, flags, size, text/HTML bodies, attachments
-- Mutations: move, set flags, delete + expunge
+- Mutations: move, copy, append (upload), set flags, delete + expunge
 - IMAP IDLE with event handlers for `EXISTS`, `EXPUNGE`, `FETCH`
-- Automatic reconnect with re‑auth and folder restore
+- Automatic reconnect with re-auth and folder restore
 - Robust folder handling with graceful error recovery for problematic folders
 
 ## Install
@@ -123,11 +123,11 @@ go run examples/basic_connection/main.go
 
 #### Working with Emails
 
-- [`folders`](examples/folders/main.go) - List folders, select/examine folders, get email counts
-- [`search`](examples/search/main.go) - Search emails by various criteria (flags, dates, sender, size, etc.)
+- [`folders`](examples/folders/main.go) - List, create, rename, delete folders; select/examine; get email counts
+- [`search`](examples/search/main.go) - Search emails with raw criteria and the type-safe SearchBuilder
 - [`literal_search`](examples/literal_search/main.go) - Search with non-ASCII characters using RFC 3501 literal syntax
 - [`fetch_emails`](examples/fetch_emails/main.go) - Fetch email headers (fast) and full content with attachments (slower)
-- [`email_operations`](examples/email_operations/main.go) - Move emails, set/remove flags, delete and expunge
+- [`email_operations`](examples/email_operations/main.go) - Move, copy, append emails; set/remove flags; delete and expunge
 
 #### Advanced Features
 
@@ -196,6 +196,16 @@ if len(folderErrors) > 0 {
 // Note: 2 folders had errors:
 //   - folder "[Gmail]": NO [NONEXISTENT] Unknown Mailbox
 //   - folder "[Gmail]/All Mail": NO [NONEXISTENT] Unknown Mailbox
+
+// Create, rename, and delete folders
+err = m.CreateFolder("INBOX/Projects")
+if err != nil { panic(err) }
+
+err = m.RenameFolder("INBOX/Projects", "INBOX/Archive")
+if err != nil { panic(err) }
+
+err = m.DeleteFolder("INBOX/Archive")
+if err != nil { panic(err) }
 
 // Get detailed statistics for each folder (includes max UID)
 stats, err := m.GetFolderStats()
@@ -388,6 +398,51 @@ emojiUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {8}\r\n😀👍")
 // This is crucial since Unicode characters use multiple bytes
 ```
 
+#### Type-Safe Search Builder
+
+For complex or repeated queries, use the fluent `SearchBuilder` instead of raw strings:
+
+```go
+// Simple search
+uids, _ := m.SearchUIDs(imap.Search().Unseen())
+
+// Combine multiple criteria (AND)
+uids, _ = m.SearchUIDs(
+    imap.Search().
+        From("boss@company.com").
+        Since(time.Now().AddDate(0, 0, -7)).
+        Unseen(),
+)
+
+// Date range
+lastMonth := time.Now().AddDate(0, -1, 0)
+uids, _ = m.SearchUIDs(
+    imap.Search().Since(lastMonth).Before(time.Now()).Flagged(),
+)
+
+// OR and NOT operators
+uids, _ = m.SearchUIDs(
+    imap.Search().Or(
+        imap.Search().From("alice@example.com"),
+        imap.Search().From("bob@example.com"),
+    ).Unseen(),
+)
+
+uids, _ = m.SearchUIDs(
+    imap.Search().Not(imap.Search().From("noreply@")).Unseen(),
+)
+
+// Size filters
+uids, _ = m.SearchUIDs(imap.Search().Larger(10 * 1024 * 1024)) // > 10MB
+
+// Non-ASCII text is handled automatically (CHARSET UTF-8 + literal syntax)
+uids, _ = m.SearchUIDs(imap.Search().Subject("日報"))
+
+// You can also use Build() to get the raw string for GetUIDs()
+query := imap.Search().From("alice").Unseen().Since(lastMonth).Build()
+uids, _ = m.GetUIDs(query)
+```
+
 ### 3. Fetching Email Details
 
 ```go
@@ -478,11 +533,22 @@ fmt.Print(email)
 ### 4. Email Operations
 
 ```go
-// === Moving Emails ===
+// === Moving and Copying Emails ===
 uid := 245
 err = m.MoveEmail(uid, "INBOX/Archive")
 if err != nil { panic(err) }
 fmt.Printf("Moved email %d to Archive\n", uid)
+
+// Copy keeps the original in the current folder
+err = m.CopyEmail(uid, "INBOX/Backup")
+if err != nil { panic(err) }
+fmt.Printf("Copied email %d to Backup\n", uid)
+
+// === Uploading Messages (APPEND) ===
+msg := []byte("From: me@example.com\r\nTo: you@example.com\r\nSubject: Hello\r\n\r\nMessage body")
+err = m.Append("Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
+if err != nil { panic(err) }
+fmt.Println("Uploaded draft message")
 
 // === Setting Flags ===
 // Mark as read

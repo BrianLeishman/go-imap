@@ -9,8 +9,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +28,7 @@ type mockIMAPServer struct {
 	failAuth       bool
 	failConnection bool
 	responses      map[string]string
+	failCommands   map[string]bool // commands that should return NO (keyed by uppercase command name)
 	tlsConfig      *tls.Config
 }
 
@@ -46,12 +49,13 @@ func newMockIMAPServer(validUser, validPass string) (*mockIMAPServer, error) {
 	}
 
 	server := &mockIMAPServer{
-		listener:  listener,
-		address:   listener.Addr().String(),
-		validUser: validUser,
-		validPass: validPass,
-		responses: make(map[string]string),
-		tlsConfig: tlsConfig,
+		listener:     listener,
+		address:      listener.Addr().String(),
+		validUser:    validUser,
+		validPass:    validPass,
+		responses:    make(map[string]string),
+		failCommands: make(map[string]bool),
+		tlsConfig:    tlsConfig,
 	}
 
 	go server.serve()
@@ -129,13 +133,48 @@ func (s *mockIMAPServer) handleConnection(conn net.Conn) {
 			writer.WriteString("* CAPABILITY IMAP4rev1 LOGIN AUTHENTICATE\r\n")
 			writer.WriteString(fmt.Sprintf("%s OK CAPABILITY completed\r\n", tag))
 
+		case "APPEND":
+			// Two-phase APPEND literal continuation protocol
+			literalSize := 0
+			if idx := strings.LastIndex(line, "{"); idx != -1 {
+				if endIdx := strings.LastIndex(line, "}"); endIdx > idx {
+					sizeStr := strings.TrimSuffix(line[idx+1:endIdx], "+")
+					literalSize, _ = strconv.Atoi(sizeStr)
+				}
+			}
+			writer.WriteString("+ Ready for literal data\r\n")
+			writer.Flush()
+			if literalSize > 0 {
+				buf := make([]byte, literalSize)
+				if _, err := io.ReadFull(reader, buf); err != nil {
+					return
+				}
+			}
+			if _, err := reader.ReadString('\n'); err != nil {
+				return
+			}
+			writer.WriteString(fmt.Sprintf("%s OK [APPENDUID 1 100] APPEND completed\r\n", tag))
+
+		case "SELECT":
+			writer.WriteString("* 0 EXISTS\r\n* 0 RECENT\r\n")
+			writer.WriteString(fmt.Sprintf("%s OK SELECT completed\r\n", tag))
+
+		case "EXAMINE":
+			writer.WriteString("* 0 EXISTS\r\n* 0 RECENT\r\n")
+			writer.WriteString(fmt.Sprintf("%s OK EXAMINE completed\r\n", tag))
+
 		case "LOGOUT":
 			writer.WriteString("* BYE IMAP4rev1 Server logging out\r\n")
 			writer.WriteString(fmt.Sprintf("%s OK LOGOUT completed\r\n", tag))
+			writer.Flush()
 			return
 
 		default:
-			writer.WriteString(fmt.Sprintf("%s OK %s completed\r\n", tag, command))
+			if s.failCommands[command] {
+				writer.WriteString(fmt.Sprintf("%s NO %s failed\r\n", tag, command))
+			} else {
+				writer.WriteString(fmt.Sprintf("%s OK %s completed\r\n", tag, command))
+			}
 		}
 
 		writer.Flush()
