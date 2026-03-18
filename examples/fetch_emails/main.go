@@ -16,7 +16,7 @@ func connectAndSelectInbox() (*imap.Dialer, error) {
 
 	err = m.SelectFolder("INBOX")
 	if err != nil {
-		m.Close()
+		_ = m.Close()
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
 
