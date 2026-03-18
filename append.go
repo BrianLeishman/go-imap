@@ -100,7 +100,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 
 		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+4:]))
+				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
 			}
 			return nil
 		}
