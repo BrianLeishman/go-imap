@@ -127,6 +127,42 @@ func main() {
 	fmt.Printf("Emails larger than 1MB: %d\n", len(mediumUIDs))
 	fmt.Printf("Emails smaller than 10KB: %d\n", len(smallUIDs))
 
+	fmt.Println("\n=== Search Builder (Type-Safe API) ===")
+
+	// The SearchBuilder provides a fluent, type-safe alternative to raw strings
+	unseenBuilderUIDs, _ := m.SearchUIDs(imap.Search().Unseen())
+	fmt.Printf("Unread emails (builder): %d\n", len(unseenBuilderUIDs))
+
+	// Combine multiple criteria
+	weekAgoTime := time.Now().AddDate(0, 0, -7)
+	recentUnread, _ := m.SearchUIDs(
+		imap.Search().Unseen().Since(weekAgoTime),
+	)
+	fmt.Printf("Unread emails from last 7 days (builder): %d\n", len(recentUnread))
+
+	// OR: messages from either sender
+	fromEither, _ := m.SearchUIDs(
+		imap.Search().Or(
+			imap.Search().From("boss@company.com"),
+			imap.Search().From("support@github.com"),
+		),
+	)
+	fmt.Printf("Emails from boss or GitHub support: %d\n", len(fromEither))
+
+	// NOT: exclude certain senders
+	notNoreply, _ := m.SearchUIDs(
+		imap.Search().Not(imap.Search().From("noreply@")).Unseen(),
+	)
+	fmt.Printf("Unread emails NOT from noreply: %d\n", len(notNoreply))
+
+	// Size filter
+	largeBuilder, _ := m.SearchUIDs(imap.Search().Larger(1048576))
+	fmt.Printf("Emails larger than 1MB (builder): %d\n", len(largeBuilder))
+
+	// You can also get the raw string from a builder
+	query := imap.Search().From("boss@company.com").Unseen().Since(weekAgoTime).Build()
+	fmt.Printf("Built query string: %s\n", query)
+
 	fmt.Println("\n=== Special Searches ===")
 
 	answeredUIDs, _ := m.GetUIDs("ANSWERED")

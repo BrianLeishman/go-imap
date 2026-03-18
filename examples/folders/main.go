@@ -68,6 +68,32 @@ func main() {
 	}
 	fmt.Printf("Sent folder contains %d messages\n", len(sentUIDs))
 
+	fmt.Println("\n--- Folder Management ---")
+
+	// Create a new folder
+	err = m.CreateFolder("INBOX/TestFolder")
+	if err != nil {
+		log.Printf("Failed to create folder: %v", err)
+	} else {
+		fmt.Println("Created folder: INBOX/TestFolder")
+	}
+
+	// Rename the folder
+	err = m.RenameFolder("INBOX/TestFolder", "INBOX/RenamedFolder")
+	if err != nil {
+		log.Printf("Failed to rename folder: %v", err)
+	} else {
+		fmt.Println("Renamed folder: INBOX/TestFolder -> INBOX/RenamedFolder")
+	}
+
+	// Delete the folder
+	err = m.DeleteFolder("INBOX/RenamedFolder")
+	if err != nil {
+		log.Printf("Failed to delete folder: %v", err)
+	} else {
+		fmt.Println("Deleted folder: INBOX/RenamedFolder")
+	}
+
 	fmt.Println("\n--- Email Counts ---")
 
 	// Get total email count across all folders (traditional approach)

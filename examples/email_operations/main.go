@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	imap "github.com/BrianLeishman/go-imap"
 )
@@ -75,6 +76,32 @@ func main() {
 		}
 	} else {
 		fmt.Println("Archive folder doesn't exist, skipping move demo")
+	}
+
+	fmt.Println("\n=== Copying Emails ===")
+
+	// Copy an email to another folder (original stays in place)
+	if archiveExists {
+		err = m.CopyEmail(uid, "INBOX/Archive")
+		if err != nil {
+			log.Printf("Failed to copy email: %v", err)
+		} else {
+			fmt.Printf("Copied email UID %d to Archive (original remains in INBOX)\n", uid)
+		}
+	} else {
+		fmt.Println("Archive folder doesn't exist, skipping copy demo")
+	}
+
+	fmt.Println("\n=== Appending Messages (Upload) ===")
+
+	// Upload a message to a folder using IMAP APPEND
+	msg := []byte("From: me@example.com\r\nTo: you@example.com\r\nSubject: Test Draft\r\n\r\nThis is a test message uploaded via APPEND.")
+	err = m.Append("Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
+	if err != nil {
+		log.Printf("Failed to append message: %v", err)
+		fmt.Println("(Note: Append requires a valid target folder)")
+	} else {
+		fmt.Println("Uploaded draft message to Drafts folder")
 	}
 
 	fmt.Println("\n=== Setting Individual Flags ===")
