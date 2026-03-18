@@ -26,6 +26,7 @@ type mockIMAPServer struct {
 	failAuth       bool
 	failConnection bool
 	responses      map[string]string
+	failCommands   map[string]bool // commands that should return NO (keyed by uppercase command name)
 	tlsConfig      *tls.Config
 }
 
@@ -46,12 +47,13 @@ func newMockIMAPServer(validUser, validPass string) (*mockIMAPServer, error) {
 	}
 
 	server := &mockIMAPServer{
-		listener:  listener,
-		address:   listener.Addr().String(),
-		validUser: validUser,
-		validPass: validPass,
-		responses: make(map[string]string),
-		tlsConfig: tlsConfig,
+		listener:     listener,
+		address:      listener.Addr().String(),
+		validUser:    validUser,
+		validPass:    validPass,
+		responses:    make(map[string]string),
+		failCommands: make(map[string]bool),
+		tlsConfig:    tlsConfig,
 	}
 
 	go server.serve()
@@ -135,7 +137,11 @@ func (s *mockIMAPServer) handleConnection(conn net.Conn) {
 			return
 
 		default:
-			writer.WriteString(fmt.Sprintf("%s OK %s completed\r\n", tag, command))
+			if s.failCommands[command] {
+				writer.WriteString(fmt.Sprintf("%s NO %s failed\r\n", tag, command))
+			} else {
+				writer.WriteString(fmt.Sprintf("%s OK %s completed\r\n", tag, command))
+			}
 		}
 
 		writer.Flush()

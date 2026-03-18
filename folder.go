@@ -94,6 +94,42 @@ func (d *Dialer) selectAndGetCount(folder string) (int, error) {
 	return 0, nil
 }
 
+// CreateFolder creates a new mailbox with the given name.
+func (d *Dialer) CreateFolder(name string) error {
+	_, err := d.Exec(`CREATE "`+AddSlashes.Replace(name)+`"`, false, RetryCount, nil)
+	if err != nil {
+		return fmt.Errorf("imap create folder: %w", err)
+	}
+	return nil
+}
+
+// DeleteFolder permanently removes a mailbox.
+// If the deleted folder is currently selected, the folder state is cleared.
+func (d *Dialer) DeleteFolder(name string) error {
+	_, err := d.Exec(`DELETE "`+AddSlashes.Replace(name)+`"`, false, RetryCount, nil)
+	if err != nil {
+		return fmt.Errorf("imap delete folder: %w", err)
+	}
+	if d.Folder == name {
+		d.Folder = ""
+		d.ReadOnly = false
+	}
+	return nil
+}
+
+// RenameFolder renames a mailbox from oldName to newName.
+// If the renamed folder is currently selected, the tracked folder name is updated.
+func (d *Dialer) RenameFolder(oldName, newName string) error {
+	_, err := d.Exec(`RENAME "`+AddSlashes.Replace(oldName)+`" "`+AddSlashes.Replace(newName)+`"`, false, RetryCount, nil)
+	if err != nil {
+		return fmt.Errorf("imap rename folder: %w", err)
+	}
+	if d.Folder == oldName {
+		d.Folder = newName
+	}
+	return nil
+}
+
 // GetTotalEmailCount returns the total email count across all folders
 func (d *Dialer) GetTotalEmailCount() (count int, err error) {
 	return d.GetTotalEmailCountStartingFromExcluding("", nil)

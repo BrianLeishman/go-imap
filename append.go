@@ -1,0 +1,100 @@
+package imap
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/rs/xid"
+)
+
+// Append uploads a message to the specified folder.
+//
+// The flags parameter specifies initial flags for the message (e.g., `\Seen`, `\Draft`).
+// Pass nil or an empty slice for no flags. The date parameter sets the internal date;
+// pass a zero time.Time to let the server use the current time.
+//
+// The message parameter should be a complete RFC 2822 message (headers + body).
+//
+// Example:
+//
+//	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
+//	err := conn.Append("INBOX", []string{`\Seen`}, time.Time{}, msg)
+func (d *Dialer) Append(folder string, flags []string, date time.Time, message []byte) error {
+	// Build the APPEND command prefix
+	flagStr := ""
+	if len(flags) > 0 {
+		flagStr = " (" + strings.Join(flags, " ") + ")"
+	}
+	dateStr := ""
+	if !date.IsZero() {
+		dateStr = fmt.Sprintf(` "%s"`, date.Format(TimeFormat))
+	}
+
+	cmd := fmt.Sprintf(`APPEND "%s"%s%s {%d}`,
+		AddSlashes.Replace(folder), flagStr, dateStr, len(message))
+
+	tag := []byte(strings.ToUpper(xid.New().String()))
+
+	if CommandTimeout != 0 {
+		_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+		defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
+	}
+
+	if Verbose {
+		debugLog(d.ConnNum, d.Folder, "sending command", "command", string(tag)+" "+cmd)
+	}
+
+	// Phase 1: Send the APPEND command with literal size
+	_, err := fmt.Fprintf(d.conn, "%s %s\r\n", tag, cmd)
+	if err != nil {
+		return fmt.Errorf("imap append write command: %w", err)
+	}
+
+	// Phase 2: Wait for continuation response (+)
+	r := bufio.NewReader(d.conn)
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		return fmt.Errorf("imap append read continuation: %w", err)
+	}
+
+	if Verbose && !SkipResponses {
+		debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
+	}
+
+	if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
+		return fmt.Errorf("imap append: expected continuation (+), got: %s", dropNl(line))
+	}
+
+	// Phase 3: Send the literal message bytes
+	_, err = d.conn.Write(message)
+	if err != nil {
+		return fmt.Errorf("imap append write literal: %w", err)
+	}
+	_, err = d.conn.Write([]byte("\r\n"))
+	if err != nil {
+		return fmt.Errorf("imap append write crlf: %w", err)
+	}
+
+	// Phase 4: Read the tagged response
+	taglen := len(tag)
+	for {
+		line, err = r.ReadBytes('\n')
+		if err != nil {
+			return fmt.Errorf("imap append read response: %w", err)
+		}
+
+		if Verbose && !SkipResponses {
+			debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
+		}
+
+		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
+			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
+				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+4:]))
+			}
+			return nil
+		}
+	}
+}
