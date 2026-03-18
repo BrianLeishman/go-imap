@@ -18,6 +18,10 @@ import (
 //
 // The message parameter should be a complete RFC 2822 message (headers + body).
 //
+// Note: Append does not retry on failure because the IMAP APPEND protocol uses a
+// two-phase literal transfer. A partial send cannot be safely retried without
+// risking duplicate messages.
+//
 // Example:
 //
 //	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")

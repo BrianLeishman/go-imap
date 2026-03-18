@@ -235,48 +235,23 @@ func TestRenameFolder_Error(t *testing.T) {
 
 func TestCopyEmail_Error(t *testing.T) {
 	d, server := setupTestDialer(t)
+	// The mock parses the first word after tag as the command, so "UID" matches UID COPY.
 	server.failCommands["UID"] = true
 	d.Folder = "INBOX"
 	d.ReadOnly = false
 
 	err := d.CopyEmail(123, "Archive")
-	if err != nil {
-		// UID COPY goes through the default handler which checks failCommands for "UID"
-		// The mock parses the first word after tag as the command, so "UID" is the command
-		t.Logf("CopyEmail error (expected): %v", err)
+	if err == nil {
+		t.Fatal("expected error from CopyEmail when server rejects UID command")
 	}
 }
 
 func TestAppend(t *testing.T) {
-	// Append requires a server that handles the continuation protocol (+).
-	// The existing mockIMAPServer doesn't handle APPEND's literal continuation,
-	// so we create a specialized mock for this test.
-	origVerbose := Verbose
-	origRetry := RetryCount
-	origTLS := TLSSkipVerify
+	d, _ := setupTestDialer(t)
+
 	origTimeout := CommandTimeout
-	Verbose = false
-	RetryCount = 1
-	TLSSkipVerify = true
 	CommandTimeout = 5 * time.Second
-	defer func() {
-		Verbose = origVerbose
-		RetryCount = origRetry
-		TLSSkipVerify = origTLS
-		CommandTimeout = origTimeout
-	}()
-
-	server, err := newAppendMockServer("user", "pass")
-	if err != nil {
-		t.Fatalf("failed to create mock server: %v", err)
-	}
-	defer server.Close()
-
-	d, err := New("user", "pass", server.GetHost(), server.GetPort())
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer d.Close()
+	t.Cleanup(func() { CommandTimeout = origTimeout })
 
 	t.Run("basic append", func(t *testing.T) {
 		msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")

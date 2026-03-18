@@ -224,10 +224,7 @@ func (d *Dialer) CopyEmail(uid int, folder string) error {
 	if readOnlyState {
 		_ = d.ExamineFolder(d.Folder)
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // MarkSeen marks an email as seen/read
