@@ -58,62 +58,160 @@ func calculateTokenEnd(tokenStart, sizeVal, bufferLen int) (int, error) {
 	}
 }
 
+// makeFetchToken creates a Token from the given type and raw string boundaries.
+func makeFetchToken(tokenType TType, r string, tokenStart, tokenEnd int) *Token {
+	switch tokenType {
+	case TQuoted:
+		return &Token{Type: tokenType, Str: RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1]))}
+	case TLiteral:
+		s := string(r[tokenStart : tokenEnd+1])
+		num, err := strconv.Atoi(s)
+		if err == nil {
+			return &Token{Type: TNumber, Num: num}
+		}
+		if s == "NIL" {
+			return &Token{Type: TNil}
+		}
+		return &Token{Type: TLiteral, Str: s}
+	case TAtom:
+		return &Token{Type: tokenType, Str: string(r[tokenStart : tokenEnd+1])}
+	case TContainer:
+		return &Token{Type: tokenType, Tokens: make([]*Token, 0, 1)}
+	default:
+		return nil
+	}
+}
+
+// parseAtomLiteral parses the size and literal data when a '{' has been encountered.
+// tokenStart points to the first digit of the size. i is the current position in r.
+// Returns the new tokenStart (for literal data), tokenEnd, new i position, and any error.
+func parseAtomLiteral(r string, i, tokenStart int) (newTokenStart, tokenEnd, newI int, err error) {
+	b := r[i]
+	tokenEndOfSize := i // Current 'i' is at '}' or '+'
+	if b == '+' {
+		i++ // skip '+', now should be '}'
+		if i >= len(r) || r[i] != '}' {
+			return 0, 0, 0, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, r)
+		}
+	}
+	// tokenStart for size was set when '{' was seen. r[tokenStart:tokenEndOfSize] is the size string.
+	sizeVal, err := strconv.Atoi(string(r[tokenStart:tokenEndOfSize]))
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("TAtom size Atoi failed for '%s': %w", string(r[tokenStart:tokenEndOfSize]), err)
+	}
+
+	i++ // Advance 'i' past '}' to the start of actual literal data
+
+	if i < len(r) && r[i] == '\r' {
+		i++
+	}
+	if i < len(r) && r[i] == '\n' {
+		i++
+	}
+
+	newTokenStart = i // tokenStart is now for the literal data itself
+
+	// Calculate token end position with boundary checks
+	tokenEnd, err = calculateTokenEnd(newTokenStart, sizeVal, len(r))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	return newTokenStart, tokenEnd, tokenEnd, nil
+}
+
+// fetchParserState holds the mutable state for the token parser.
+type fetchParserState struct {
+	currentToken TType
+	tokenStart   int
+	tokenEnd     int
+	depth        int
+	container    []tokenContainer
+}
+
+// handleUnsetByte processes a byte when no token is currently being parsed.
+// Returns an error for unmatched ')'.
+func (s *fetchParserState) handleUnsetByte(b byte, i int, r string, pushToken func() *Token) error {
+	switch {
+	case b == '"':
+		s.currentToken = TQuoted
+		s.tokenStart = i + 1
+	case IsLiteral(rune(b)):
+		s.currentToken = TLiteral
+		s.tokenStart = i
+	case b == '{': // Start of a new literal
+		s.currentToken = TAtom
+		s.tokenStart = i + 1 // tokenStart for the size digits
+	case b == '(':
+		s.currentToken = TContainer
+		t := pushToken() // push container token
+		s.depth++
+		// Grow container stack if needed
+		if s.depth >= len(s.container) {
+			newContainer := make([]tokenContainer, s.depth*2)
+			copy(newContainer, s.container)
+			s.container = newContainer
+		}
+		s.container[s.depth] = &t.Tokens
+	case b == ')':
+		if s.depth == 0 { // Unmatched ')'
+			return fmt.Errorf("unmatched ')' at char %d in %s", i, r)
+		}
+		pushToken() // push any pending token before closing container
+		s.depth--
+	}
+	return nil
+}
+
+// handleActiveToken processes a byte when a token is actively being parsed.
+// Returns (newI, skip, err) where skip=true means the caller should skip the unset check.
+func (s *fetchParserState) handleActiveToken(r string, b byte, i int, pushToken func() *Token) (int, bool, error) {
+	switch s.currentToken {
+	case TQuoted:
+		switch b {
+		case '"':
+			s.tokenEnd = i - 1
+			pushToken()
+			return i, true, nil
+		case '\\':
+			return i + 1, true, nil
+		}
+	case TLiteral:
+		if !IsLiteral(rune(b)) {
+			s.tokenEnd = i - 1
+			pushToken()
+		}
+	case TAtom:
+		if !unicode.IsDigit(rune(b)) {
+			newTokenStart, tokenEnd, newI, err := parseAtomLiteral(r, i, s.tokenStart)
+			if err != nil {
+				return 0, false, err
+			}
+			s.tokenStart = newTokenStart
+			s.tokenEnd = tokenEnd
+			i = newI
+			pushToken()
+		}
+	}
+	return i, false, nil
+}
+
 // parseFetchTokens parses IMAP FETCH response tokens
 func parseFetchTokens(r string) ([]*Token, error) {
 	tokens := make([]*Token, 0)
 
-	currentToken := TUnset
-	tokenStart := 0
-	tokenEnd := 0
-	depth := 0
-	container := make([]tokenContainer, 4)
-	container[0] = &tokens
+	st := fetchParserState{
+		currentToken: TUnset,
+		container:    make([]tokenContainer, 4),
+	}
+	st.container[0] = &tokens
 
 	pushToken := func() *Token {
-		var t *Token
-		switch currentToken {
-		case TQuoted:
-			t = &Token{
-				Type: currentToken,
-				Str:  RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1])),
-			}
-		case TLiteral:
-			s := string(r[tokenStart : tokenEnd+1])
-			num, err := strconv.Atoi(s)
-			if err == nil {
-				t = &Token{
-					Type: TNumber,
-					Num:  num,
-				}
-			} else {
-				if s == "NIL" {
-					t = &Token{
-						Type: TNil,
-					}
-				} else {
-					t = &Token{
-						Type: TLiteral,
-						Str:  s,
-					}
-				}
-			}
-		case TAtom:
-			t = &Token{
-				Type: currentToken,
-				Str:  string(r[tokenStart : tokenEnd+1]),
-			}
-		case TContainer:
-			t = &Token{
-				Type:   currentToken,
-				Tokens: make([]*Token, 0, 1),
-			}
-		}
-
+		t := makeFetchToken(st.currentToken, r, st.tokenStart, st.tokenEnd)
 		if t != nil {
-			*container[depth] = append(*container[depth], t)
+			*st.container[st.depth] = append(*st.container[st.depth], t)
 		}
-		currentToken = TUnset
-
+		st.currentToken = TUnset
 		return t
 	}
 
@@ -122,110 +220,30 @@ func parseFetchTokens(r string) ([]*Token, error) {
 	for i < l {
 		b := r[i]
 
-		switch currentToken {
-		case TQuoted:
-			switch b {
-			case '"':
-				tokenEnd = i - 1
-				pushToken()
-				goto Cont
-			case '\\':
-				i++
-				goto Cont
-			}
-		case TLiteral:
-			switch {
-			case IsLiteral(rune(b)):
-			default:
-				tokenEnd = i - 1
-				pushToken()
-			}
-		case TAtom:
-			switch {
-			case unicode.IsDigit(rune(b)):
-				// Still accumulating digits for size, main loop's i++ will advance
-			default: // Should be '}' or '+}' (LITERAL+, RFC 7888)
-				tokenEndOfSize := i // Current 'i' is at '}' or '+'
-				if b == '+' {
-					i++ // skip '+', now should be '}'
-					if i >= len(r) || r[i] != '}' {
-						return nil, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, r)
-					}
-				}
-				// tokenStart for size was set when '{' was seen. r[tokenStart:tokenEndOfSize] is the size string.
-				sizeVal, err := strconv.Atoi(string(r[tokenStart:tokenEndOfSize]))
-				if err != nil {
-					return nil, fmt.Errorf("TAtom size Atoi failed for '%s': %w", string(r[tokenStart:tokenEndOfSize]), err)
-				}
+		newI, skip, err := st.handleActiveToken(r, b, i, pushToken)
+		if err != nil {
+			return nil, err
+		}
+		i = newI
 
-				i++ // Advance 'i' past '}' to the start of actual literal data
-
-				if i < len(r) && r[i] == '\r' {
-					i++
-				}
-				if i < len(r) && r[i] == '\n' {
-					i++
-				}
-
-				tokenStart = i // tokenStart is now for the literal data itself
-
-				// Calculate token end position with boundary checks
-				tokenEnd, err = calculateTokenEnd(tokenStart, sizeVal, len(r))
-				if err != nil {
-					return nil, err
-				}
-
-				i = tokenEnd // Move main loop cursor to the end of the literal data
-				pushToken()  // Push the TAtom token
+		if !skip && st.currentToken == TUnset {
+			if err := st.handleUnsetByte(b, i, r, pushToken); err != nil {
+				return nil, err
 			}
 		}
 
-		if currentToken == TUnset { // If no token is being actively parsed
-			switch {
-			case b == '"':
-				currentToken = TQuoted
-				tokenStart = i + 1
-			case IsLiteral(rune(b)):
-				currentToken = TLiteral
-				tokenStart = i
-			case b == '{': // Start of a new literal
-				currentToken = TAtom
-				tokenStart = i + 1 // tokenStart for the size digits
-			case b == '(':
-				currentToken = TContainer
-				t := pushToken() // push any pending token before starting container
-				depth++
-				// Grow container stack if needed
-				if depth >= len(container) {
-					newContainer := make([]tokenContainer, depth*2)
-					copy(newContainer, container)
-					container = newContainer
-				}
-				container[depth] = &t.Tokens
-			case b == ')':
-				if depth == 0 { // Unmatched ')'
-					return nil, fmt.Errorf("unmatched ')' at char %d in %s", i, r)
-				}
-				pushToken() // push any pending token before closing container
-				depth--
-			}
-		}
-
-	Cont:
-		if depth < 0 {
+		if st.depth < 0 {
 			break
 		}
 		i++
-		if i >= l { // If we've processed all characters or gone past
-			if currentToken != TUnset { // Only push if there's a pending token
-				tokenEnd = l - 1 // The last character is at index l-1
-				pushToken()
-			}
+		if i >= l && st.currentToken != TUnset {
+			st.tokenEnd = l - 1
+			pushToken()
 		}
 	}
 
-	if depth != 0 {
-		return nil, fmt.Errorf("mismatched parentheses, depth %d at end of parsing %s", depth, r)
+	if st.depth != 0 {
+		return nil, fmt.Errorf("mismatched parentheses, depth %d at end of parsing %s", st.depth, r)
 	}
 
 	if len(tokens) == 1 && tokens[0].Type == TContainer {
@@ -241,6 +259,90 @@ func findLineEnd(s string, start int) int {
 		return len(s)
 	}
 	return start + lineEndRel
+}
+
+// skipIMAPLiteralInContent attempts to skip an IMAP literal ({NNN} or {NNN+}) at position i in s.
+// If a valid literal is found, returns the new position after the literal data, skipped=true, and any error.
+// If the '{' is not a valid literal start, returns the original i, skipped=false, nil.
+func skipIMAPLiteralInContent(s string, i int) (newI int, skipped bool, err error) {
+	j := i + 1
+	for j < len(s) && unicode.IsDigit(rune(s[j])) {
+		j++
+	}
+	// Support LITERAL+ (RFC 7888): {NNN+} syntax
+	if j < len(s) && s[j] == '+' {
+		j++
+	}
+	if j <= i+1 || j >= len(s) || s[j] != '}' {
+		return i, false, nil
+	}
+	sizeEnd := j
+	if s[sizeEnd-1] == '+' {
+		sizeEnd--
+	}
+	size, err := strconv.Atoi(s[i+1 : sizeEnd])
+	if err != nil {
+		return 0, false, fmt.Errorf("parse literal size %q: %w", s[i+1:sizeEnd], err)
+	}
+
+	i = j + 1
+	if i < len(s) && s[i] == '\r' {
+		i++
+	}
+	if i < len(s) && s[i] == '\n' {
+		i++
+	}
+	if i+size > len(s) {
+		return 0, false, fmt.Errorf("literal size %d exceeds remaining buffer (%d)", size, len(s)-i)
+	}
+	return i + size, true, nil
+}
+
+// skipQuotedRun advances past all bytes inside a quoted string starting at position i.
+// The position i should be the byte after the opening '"'.
+// Returns the position after the closing '"'.
+func skipQuotedRun(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case '\\':
+			if i+1 < len(s) {
+				i += 2
+				continue
+			}
+		case '"':
+			return i + 1
+		}
+		i++
+	}
+	return i
+}
+
+// contentEndStep processes one byte in the parenthesis-balanced scan.
+// Returns (newI, newDepth, done, endPos, err). When done=true, endPos is the result.
+func contentEndStep(s string, i, depth int) (newI, newDepth int, done bool, endPos int, err error) {
+	switch s[i] {
+	case '"':
+		return skipQuotedRun(s, i+1), depth, false, 0, nil
+	case '{':
+		ni, skipped, litErr := skipIMAPLiteralInContent(s, i)
+		if litErr != nil {
+			return 0, depth, true, 0, litErr
+		}
+		if skipped {
+			return ni, depth, false, 0, nil
+		}
+	case '(':
+		depth++
+	case ')':
+		if depth == 0 {
+			return 0, depth, true, 0, fmt.Errorf("unmatched ')' at char %d", i)
+		}
+		depth--
+		if depth == 0 {
+			return i + 1, depth, true, i + 1, nil
+		}
+	}
+	return i + 1, depth, false, 0, nil
 }
 
 func findFetchContentEnd(s string, fetchContentStart int) (int, error) {
@@ -260,81 +362,71 @@ func findFetchContentEnd(s string, fetchContentStart int) (int, error) {
 	}
 
 	depth := 0
-	inQuoted := false
 	for i < len(s) {
-		b := s[i]
-
-		if inQuoted {
-			switch b {
-			case '\\':
-				if i+1 < len(s) {
-					i += 2
-					continue
-				}
-			case '"':
-				inQuoted = false
-			}
-			i++
-			continue
+		var done bool
+		var endPos int
+		var err error
+		i, depth, done, endPos, err = contentEndStep(s, i, depth)
+		if err != nil {
+			return 0, err
 		}
-
-		switch b {
-		case '"':
-			inQuoted = true
-			i++
-			continue
-		case '{':
-			j := i + 1
-			for j < len(s) && unicode.IsDigit(rune(s[j])) {
-				j++
-			}
-			// Support LITERAL+ (RFC 7888): {NNN+} syntax
-			if j < len(s) && s[j] == '+' {
-				j++
-			}
-			if j > i+1 && j < len(s) && s[j] == '}' {
-				sizeEnd := j
-				if s[sizeEnd-1] == '+' {
-					sizeEnd--
-				}
-				size, err := strconv.Atoi(s[i+1 : sizeEnd])
-				if err != nil {
-					return 0, fmt.Errorf("parse literal size %q: %w", s[i+1:sizeEnd], err)
-				}
-
-				i = j + 1
-				if i < len(s) && s[i] == '\r' {
-					i++
-				}
-				if i < len(s) && s[i] == '\n' {
-					i++
-				}
-				if i+size > len(s) {
-					return 0, fmt.Errorf("literal size %d exceeds remaining buffer (%d)", size, len(s)-i)
-				}
-				i += size
-				continue
-			}
-		case '(':
-			depth++
-			i++
-			continue
-		case ')':
-			if depth == 0 {
-				return 0, fmt.Errorf("unmatched ')' at char %d", i)
-			}
-			depth--
-			i++
-			if depth == 0 {
-				return i, nil
-			}
-			continue
+		if done {
+			return endPos, nil
 		}
-
-		i++
 	}
 
 	return 0, fmt.Errorf("unterminated FETCH response (unbalanced parentheses)")
+}
+
+// parseSingleFetchLine parses a single "* N FETCH ..." line and returns the tokens.
+func parseSingleFetchLine(line string) ([]*Token, error) {
+	fetchContentStart, fetchContentEnd, err := extractFetchContent(line, 0)
+	if err != nil {
+		return nil, err
+	}
+	fetchContent := line[fetchContentStart:fetchContentEnd]
+	tokens, parseErr := parseFetchTokens(fetchContent)
+	if parseErr != nil {
+		return nil, fmt.Errorf("token parsing failed for line part [%s] from original line [%s]: %w", fetchContent, line, parseErr)
+	}
+	return tokens, nil
+}
+
+// extractFetchContent locates the FETCH content boundaries within body starting at start.
+// Returns fetchContentStart, fetchContentEnd, and any error.
+func extractFetchContent(body string, start int) (fetchContentStart, fetchContentEnd int, err error) {
+	lineSnippet := func() string {
+		return strings.TrimSpace(body[start:findLineEnd(body, start)])
+	}
+	if !strings.HasPrefix(body[start:], "* ") {
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %#v", lineSnippet())
+	}
+
+	restStart := start + 2
+	rest := body[restStart:]
+	idx := strings.IndexByte(rest, ' ')
+	if idx == -1 {
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %#v", lineSnippet())
+	}
+
+	seqNumStr := rest[:idx]
+	if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, lineSnippet(), convErr)
+	}
+
+	restAfterSeqStart := restStart + idx + 1
+	for restAfterSeqStart < len(body) && body[restAfterSeqStart] == ' ' {
+		restAfterSeqStart++
+	}
+	if !strings.HasPrefix(body[restAfterSeqStart:], "FETCH ") {
+		return 0, 0, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %#v", lineSnippet())
+	}
+	fetchContentStart = restAfterSeqStart + len("FETCH ")
+	fetchContentEnd, endErr := findFetchContentEnd(body, fetchContentStart)
+	if endErr != nil {
+		return 0, 0, fmt.Errorf("failed to locate end of FETCH response from line [%s]: %w", lineSnippet(), endErr)
+	}
+	return fetchContentStart, fetchContentEnd, nil
 }
 
 // ParseFetchResponse parses a multi-line FETCH response
@@ -348,36 +440,14 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 	locs := fetchLineStartRE.FindAllStringIndex(trimmedResponseBody, -1)
 
 	if locs == nil {
-		// No FETCH lines found by regex.
-		// Try to parse as a single line if it starts with "* ".
-		if strings.HasPrefix(trimmedResponseBody, "* ") {
-			currentLineToProcess := trimmedResponseBody
-			// Standard parsing logic for a single line
-			if !strings.HasPrefix(currentLineToProcess, "* ") {
-				return nil, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix): %#v", currentLineToProcess)
-			}
-			rest := currentLineToProcess[2:]
-			idx := strings.IndexByte(rest, ' ')
-			if idx == -1 {
-				return nil, fmt.Errorf("unable to parse Fetch line (no space after seq number): %#v", currentLineToProcess)
-			}
-			seqNumStr := rest[:idx]
-			if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
-				return nil, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, currentLineToProcess, convErr)
-			}
-			rest = strings.TrimSpace(rest[idx+1:])
-			if !strings.HasPrefix(rest, "FETCH ") {
-				return nil, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num): %#v", currentLineToProcess)
-			}
-			fetchContent := rest[len("FETCH "):]
-			tokens, parseErr := parseFetchTokens(fetchContent)
-			if parseErr != nil {
-				return nil, fmt.Errorf("token parsing failed for line part [%s] from original line [%s]: %w", fetchContent, currentLineToProcess, parseErr)
-			}
-			records = append(records, tokens)
+		if !strings.HasPrefix(trimmedResponseBody, "* ") {
 			return records, nil
 		}
-		// If not starting with "* " and no FETCH lines found by regex, return empty or error.
+		tokens, parseErr := parseSingleFetchLine(trimmedResponseBody)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		records = append(records, tokens)
 		return records, nil
 	}
 
@@ -388,33 +458,9 @@ func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, er
 			continue
 		}
 
-		if !strings.HasPrefix(trimmedResponseBody[start:], "* ") {
-			return nil, fmt.Errorf("unable to parse Fetch line (expected '* ' prefix, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
-		}
-
-		restStart := start + 2
-		rest := trimmedResponseBody[restStart:]
-		idx := strings.IndexByte(rest, ' ')
-		if idx == -1 {
-			return nil, fmt.Errorf("unable to parse Fetch line (no space after seq number, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
-		}
-
-		seqNumStr := rest[:idx]
-		if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
-			return nil, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]), convErr)
-		}
-
-		restAfterSeqStart := restStart + idx + 1
-		for restAfterSeqStart < len(trimmedResponseBody) && trimmedResponseBody[restAfterSeqStart] == ' ' {
-			restAfterSeqStart++
-		}
-		if !strings.HasPrefix(trimmedResponseBody[restAfterSeqStart:], "FETCH ") {
-			return nil, fmt.Errorf("unable to parse Fetch line (expected 'FETCH ' prefix after seq num, regex mismatch?): %#v", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]))
-		}
-		fetchContentStart := restAfterSeqStart + len("FETCH ")
-		fetchContentEnd, endErr := findFetchContentEnd(trimmedResponseBody, fetchContentStart)
-		if endErr != nil {
-			return nil, fmt.Errorf("failed to locate end of FETCH response from line [%s]: %w", strings.TrimSpace(trimmedResponseBody[start:findLineEnd(trimmedResponseBody, start)]), endErr)
+		fetchContentStart, fetchContentEnd, extractErr := extractFetchContent(trimmedResponseBody, start)
+		if extractErr != nil {
+			return nil, extractErr
 		}
 
 		currentLineToProcess := strings.TrimSpace(trimmedResponseBody[start:fetchContentEnd])

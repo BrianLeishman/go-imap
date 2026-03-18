@@ -7,71 +7,65 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func main() {
-	// Connect to server
+func connectToServer() (*imap.Dialer, error) {
 	m, err := imap.New("username", "password", "mail.server.com", 993)
 	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
-	defer func() {
-		if err := m.Close(); err != nil {
-			log.Printf("Failed to close connection: %v", err)
-		}
-	}()
+	return m, nil
+}
 
-	// List all folders
+func listFolders(m *imap.Dialer) error {
 	folders, err := m.GetFolders()
 	if err != nil {
-		log.Fatalf("Failed to get folders: %v", err)
+		return fmt.Errorf("failed to get folders: %w", err)
 	}
 
 	fmt.Println("Available folders:")
 	for _, folder := range folders {
 		fmt.Printf("  - %s\n", folder)
 	}
-	// Example output:
-	// - INBOX
-	// - Sent
-	// - Drafts
-	// - Trash
-	// - INBOX/Receipts
-	// - INBOX/Important
-	// - [Gmail]/All Mail
-	// - [Gmail]/Spam
+	return nil
+}
 
+func demonstrateFolderSelection(m *imap.Dialer) error {
 	fmt.Println("\n--- Folder Operations ---")
 
 	// Select a folder for operations (read-write mode)
-	err = m.SelectFolder("INBOX")
+	err := m.SelectFolder("INBOX")
 	if err != nil {
-		log.Fatalf("Failed to select INBOX: %v", err)
+		return fmt.Errorf("failed to select INBOX: %w", err)
 	}
 	fmt.Println("Selected INBOX in read-write mode")
 
 	// Get message count in current folder
 	allUIDs, err := m.GetUIDs("ALL")
 	if err != nil {
-		log.Fatalf("Failed to get message count: %v", err)
+		return fmt.Errorf("failed to get message count: %w", err)
 	}
 	fmt.Printf("INBOX contains %d messages\n", len(allUIDs))
 
 	// Select folder in read-only mode
 	err = m.ExamineFolder("Sent")
 	if err != nil {
-		log.Fatalf("Failed to examine Sent folder: %v", err)
+		return fmt.Errorf("failed to examine Sent folder: %w", err)
 	}
 	fmt.Println("\nExamined Sent folder in read-only mode")
 
 	sentUIDs, err := m.GetUIDs("ALL")
 	if err != nil {
-		log.Fatalf("Failed to get sent message count: %v", err)
+		return fmt.Errorf("failed to get sent message count: %w", err)
 	}
 	fmt.Printf("Sent folder contains %d messages\n", len(sentUIDs))
 
+	return nil
+}
+
+func demonstrateFolderManagement(m *imap.Dialer) {
 	fmt.Println("\n--- Folder Management ---")
 
 	// Create a new folder
-	err = m.CreateFolder("INBOX/TestFolder")
+	err := m.CreateFolder("INBOX/TestFolder")
 	if err != nil {
 		log.Printf("Failed to create folder: %v", err)
 	} else {
@@ -93,7 +87,9 @@ func main() {
 	} else {
 		fmt.Println("Deleted folder: INBOX/RenamedFolder")
 	}
+}
 
+func demonstrateEmailCounts(m *imap.Dialer) error {
 	fmt.Println("\n--- Email Counts ---")
 
 	// Get total email count across all folders (traditional approach)
@@ -108,7 +104,7 @@ func main() {
 	// Get total email count with robust error handling
 	safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
 	if err != nil {
-		log.Fatalf("Failed to get safe total email count: %v", err)
+		return fmt.Errorf("failed to get safe total email count: %w", err)
 	}
 	fmt.Printf("Total emails (safe count): %d\n", safeCount)
 
@@ -123,7 +119,7 @@ func main() {
 	excludedFolders := []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"}
 	count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(excludedFolders)
 	if err != nil {
-		log.Fatalf("Failed to get filtered email count: %v", err)
+		return fmt.Errorf("failed to get filtered email count: %w", err)
 	}
 	fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
 
@@ -137,12 +133,15 @@ func main() {
 		fmt.Printf("That's %.1f%% of your total emails\n", percentage)
 	}
 
+	return nil
+}
+
+func demonstrateFolderStats(m *imap.Dialer) error {
 	fmt.Println("\n--- Detailed Folder Statistics ---")
 
-	// Get detailed statistics for each folder
 	stats, err := m.GetFolderStats()
 	if err != nil {
-		log.Fatalf("Failed to get folder statistics: %v", err)
+		return fmt.Errorf("failed to get folder statistics: %w", err)
 	}
 
 	fmt.Printf("Found %d folders:\n", len(stats))
@@ -161,4 +160,36 @@ func main() {
 
 	fmt.Printf("\nSummary: %d/%d folders accessible, %d total emails\n",
 		successfulFolders, len(stats), totalEmails)
+
+	return nil
+}
+
+func main() {
+	m, err := connectToServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := m.Close(); err != nil {
+			log.Printf("Failed to close connection: %v", err)
+		}
+	}()
+
+	if err := listFolders(m); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := demonstrateFolderSelection(m); err != nil {
+		log.Fatal(err)
+	}
+
+	demonstrateFolderManagement(m)
+
+	if err := demonstrateEmailCounts(m); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := demonstrateFolderStats(m); err != nil {
+		log.Fatal(err)
+	}
 }

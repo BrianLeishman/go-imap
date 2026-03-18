@@ -342,6 +342,101 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	return err
 }
 
+// parseEmailBody parses an RFC 2822 message body string and populates the Email fields.
+// Returns true if parsing succeeded.
+func (d *Dialer) parseEmailBody(e *Email, bodyStr string) bool {
+	r := strings.NewReader(bodyStr)
+	env, err := enmime.ReadEnvelope(r)
+	if err != nil {
+		if Verbose {
+			warnLog(d.ConnNum, d.Folder, "email body could not be parsed", "error", err)
+			spew.Dump(env)
+			spew.Dump(bodyStr)
+		}
+		return false
+	}
+
+	e.Subject = env.GetHeader("Subject")
+	e.Text = env.Text
+	e.HTML = env.HTML
+
+	for _, a := range env.Attachments {
+		e.Attachments = append(e.Attachments, Attachment{
+			Name:     a.FileName,
+			MimeType: a.ContentType,
+			Content:  a.Content,
+		})
+	}
+	for _, a := range env.Inlines {
+		e.Attachments = append(e.Attachments, Attachment{
+			Name:     a.FileName,
+			MimeType: a.ContentType,
+			Content:  a.Content,
+		})
+	}
+
+	for _, a := range []struct {
+		dest   *EmailAddresses
+		header string
+	}{
+		{&e.From, "From"},
+		{&e.ReplyTo, "Reply-To"},
+		{&e.To, "To"},
+		{&e.CC, "cc"},
+		{&e.BCC, "bcc"},
+	} {
+		alist, _ := env.AddressList(a.header)
+		(*a.dest) = make(map[string]string, len(alist))
+		for _, addr := range alist {
+			(*a.dest)[strings.ToLower(addr.Address)] = addr.Name
+		}
+	}
+	return true
+}
+
+// unwrapTokens flattens single-child TContainer wrappers that some servers add.
+func unwrapTokens(tks []*Token) []*Token {
+	for len(tks) == 1 && tks[0].Type == TContainer {
+		tks = tks[0].Tokens
+	}
+	return tks
+}
+
+// parseEmailRecord processes a single FETCH record for GetEmails, returning the
+// parsed email, whether parsing succeeded, and any error.
+func (d *Dialer) parseEmailRecord(tks []*Token) (*Email, bool, error) {
+	tks = unwrapTokens(tks)
+	e := &Email{}
+	skip := 0
+	success := true
+	for i, t := range tks {
+		if skip > 0 {
+			skip--
+			continue
+		}
+		if err := d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
+			return nil, false, err
+		}
+		switch t.Str {
+		case "BODY[]":
+			if err := d.CheckType(tks[i+1], []TType{TAtom}, tks, "after BODY[]"); err != nil {
+				return nil, false, err
+			}
+			if !d.parseEmailBody(e, tks[i+1].Str) {
+				success = false
+			}
+			skip++
+		case "UID":
+			if err := d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
+				return nil, false, err
+			}
+			e.UID = tks[i+1].Num
+			skip++
+		}
+	}
+	return e, success, nil
+}
+
 // GetEmails retrieves full email messages including body content
 func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	emails, err = d.GetOverviews(uids...)
@@ -384,90 +479,10 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 		}
 
 		for _, tks := range records {
-			// Some servers may wrap the FETCH content with extra parentheses.
-			// Flatten single-child containers defensively until we reach fields.
-			for len(tks) == 1 && tks[0].Type == TContainer {
-				tks = tks[0].Tokens
+			e, success, err := d.parseEmailRecord(tks)
+			if err != nil {
+				return err
 			}
-			e := &Email{}
-			skip := 0
-			success := true
-			for i, t := range tks {
-				if skip > 0 {
-					skip--
-					continue
-				}
-				if err = d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
-					return err
-				}
-				switch t.Str {
-				case "BODY[]":
-					if err = d.CheckType(tks[i+1], []TType{TAtom}, tks, "after BODY[]"); err != nil {
-						return err
-					}
-					msg := tks[i+1].Str
-					r := strings.NewReader(msg)
-
-					env, err := enmime.ReadEnvelope(r)
-					if err != nil {
-						if Verbose {
-							warnLog(d.ConnNum, d.Folder, "email body could not be parsed", "error", err)
-							spew.Dump(env)
-							spew.Dump(msg)
-						}
-						success = false
-					} else {
-						e.Subject = env.GetHeader("Subject")
-						e.Text = env.Text
-						e.HTML = env.HTML
-
-						if len(env.Attachments) != 0 {
-							for _, a := range env.Attachments {
-								e.Attachments = append(e.Attachments, Attachment{
-									Name:     a.FileName,
-									MimeType: a.ContentType,
-									Content:  a.Content,
-								})
-							}
-						}
-
-						if len(env.Inlines) != 0 {
-							for _, a := range env.Inlines {
-								e.Attachments = append(e.Attachments, Attachment{
-									Name:     a.FileName,
-									MimeType: a.ContentType,
-									Content:  a.Content,
-								})
-							}
-						}
-
-						for _, a := range []struct {
-							dest   *EmailAddresses
-							header string
-						}{
-							{&e.From, "From"},
-							{&e.ReplyTo, "Reply-To"},
-							{&e.To, "To"},
-							{&e.CC, "cc"},
-							{&e.BCC, "bcc"},
-						} {
-							alist, _ := env.AddressList(a.header)
-							(*a.dest) = make(map[string]string, len(alist))
-							for _, addr := range alist {
-								(*a.dest)[strings.ToLower(addr.Address)] = addr.Name
-							}
-						}
-					}
-					skip++
-				case "UID":
-					if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
-						return err
-					}
-					e.UID = tks[i+1].Num
-					skip++
-				}
-			}
-
 			if success {
 				if emails[e.UID] == nil {
 					emails[e.UID] = &Email{UID: e.UID}
@@ -495,6 +510,160 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 	})
 
 	return emails, err
+}
+
+// parseEnvelope extracts envelope data (date, subject, addresses, message-id) from an ENVELOPE token.
+func (d *Dialer) parseEnvelope(e *Email, envelopeToken *Token, tks []*Token) error {
+	charsetReader := func(label string, input io.Reader) (io.Reader, error) {
+		label = strings.ReplaceAll(label, "windows-", "cp")
+		encoding, _ := charset.Lookup(label)
+		return encoding.NewDecoder().Reader(input), nil
+	}
+	dec := mime.WordDecoder{CharsetReader: charsetReader}
+
+	if err := d.CheckType(envelopeToken, []TType{TContainer}, tks, "after ENVELOPE"); err != nil {
+		return err
+	}
+	if err := d.CheckType(envelopeToken.Tokens[EDate], []TType{TQuoted, TNil}, tks, "for ENVELOPE[%d]", EDate); err != nil {
+		return err
+	}
+	if err := d.CheckType(envelopeToken.Tokens[ESubject], []TType{TQuoted, TAtom, TNil}, tks, "for ENVELOPE[%d]", ESubject); err != nil {
+		return err
+	}
+
+	e.Sent, _ = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", envelopeToken.Tokens[EDate].Str)
+	e.Sent = e.Sent.UTC()
+
+	var err error
+	e.Subject, err = dec.DecodeHeader(envelopeToken.Tokens[ESubject].Str)
+	if err != nil {
+		return err
+	}
+
+	for _, a := range []struct {
+		dest  *EmailAddresses
+		pos   uint8
+		debug string
+	}{
+		{&e.From, EFrom, "FROM"},
+		{&e.ReplyTo, EReplyTo, "REPLYTO"},
+		{&e.To, ETo, "TO"},
+		{&e.CC, ECC, "CC"},
+		{&e.BCC, EBCC, "BCC"},
+	} {
+		if err := d.parseEnvelopeAddresses(a.dest, envelopeToken.Tokens[a.pos], &dec, tks, a.debug); err != nil {
+			return err
+		}
+	}
+
+	e.MessageID = envelopeToken.Tokens[EMessageID].Str
+	return nil
+}
+
+// parseEnvelopeAddresses parses a single address-list field from an ENVELOPE token.
+func (d *Dialer) parseEnvelopeAddresses(dest *EmailAddresses, addrToken *Token, dec *mime.WordDecoder, tks []*Token, debug string) error {
+	if addrToken.Type == TNil {
+		return nil
+	}
+	if err := d.CheckType(addrToken, []TType{TNil, TContainer}, tks, "for ENVELOPE address %s", debug); err != nil {
+		return err
+	}
+	*dest = make(map[string]string, len(addrToken.Tokens))
+	for i, t := range addrToken.Tokens {
+		if err := d.CheckType(t.Tokens[EEName], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", debug, i, EEName); err != nil {
+			return err
+		}
+		if err := d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", debug, i, EEMailbox); err != nil {
+			return err
+		}
+		if err := d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", debug, i, EEHost); err != nil {
+			return err
+		}
+
+		name, err := dec.DecodeHeader(t.Tokens[EEName].Str)
+		if err != nil {
+			return err
+		}
+		mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
+		if err != nil {
+			return err
+		}
+		host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
+		if err != nil {
+			return err
+		}
+		(*dest)[strings.ToLower(mailbox+"@"+host)] = name
+	}
+	return nil
+}
+
+// parseOverviewField processes a single field (FLAGS, INTERNALDATE, RFC822.SIZE, ENVELOPE, UID)
+// in an overview record at position i, returning the number of extra tokens to skip.
+func (d *Dialer) parseOverviewField(e *Email, tks []*Token, i int, fieldName string) (skip int, err error) {
+	switch fieldName {
+	case "FLAGS":
+		if err = d.CheckType(tks[i+1], []TType{TContainer}, tks, "after FLAGS"); err != nil {
+			return 0, err
+		}
+		e.Flags = make([]string, len(tks[i+1].Tokens))
+		for j, t := range tks[i+1].Tokens {
+			if err = d.CheckType(t, []TType{TLiteral}, tks, "for FLAGS[%d]", j); err != nil {
+				return 0, err
+			}
+			e.Flags[j] = t.Str
+		}
+		return 1, nil
+	case "INTERNALDATE":
+		if err = d.CheckType(tks[i+1], []TType{TQuoted}, tks, "after INTERNALDATE"); err != nil {
+			return 0, err
+		}
+		e.Received, err = time.Parse(TimeFormat, tks[i+1].Str)
+		if err != nil {
+			return 0, err
+		}
+		e.Received = e.Received.UTC()
+		return 1, nil
+	case "RFC822.SIZE":
+		if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after RFC822.SIZE"); err != nil {
+			return 0, err
+		}
+		e.Size = uint64(tks[i+1].Num)
+		return 1, nil
+	case "ENVELOPE":
+		if err = d.parseEnvelope(e, tks[i+1], tks); err != nil {
+			return 0, err
+		}
+		return 1, nil
+	case "UID":
+		if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
+			return 0, err
+		}
+		e.UID = tks[i+1].Num
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// parseOverviewRecord processes a single FETCH record's tokens into an Email.
+func (d *Dialer) parseOverviewRecord(tks []*Token) (*Email, error) {
+	tks = unwrapTokens(tks)
+	e := &Email{}
+	skip := 0
+	for i, t := range tks {
+		if skip > 0 {
+			skip--
+			continue
+		}
+		if err := d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
+			return nil, err
+		}
+		s, err := d.parseOverviewField(e, tks, i, t.Str)
+		if err != nil {
+			return nil, err
+		}
+		skip = s
+	}
+	return e, nil
 }
 
 // GetOverviews retrieves email overview information (headers, flags, etc.)
@@ -545,133 +714,10 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 	emails = make(map[int]*Email, len(uids))
 
 	for _, tks := range records {
-		for len(tks) == 1 && tks[0].Type == TContainer {
-			tks = tks[0].Tokens
+		e, err := d.parseOverviewRecord(tks)
+		if err != nil {
+			return nil, err
 		}
-		e := &Email{}
-		skip := 0
-		for i, t := range tks {
-			if skip > 0 {
-				skip--
-				continue
-			}
-			if err = d.CheckType(t, []TType{TLiteral}, tks, "in root"); err != nil {
-				return nil, err
-			}
-			switch t.Str {
-			case "FLAGS":
-				if err = d.CheckType(tks[i+1], []TType{TContainer}, tks, "after FLAGS"); err != nil {
-					return nil, err
-				}
-				e.Flags = make([]string, len(tks[i+1].Tokens))
-				for i, t := range tks[i+1].Tokens {
-					if err = d.CheckType(t, []TType{TLiteral}, tks, "for FLAGS[%d]", i); err != nil {
-						return nil, err
-					}
-					e.Flags[i] = t.Str
-				}
-				skip++
-			case "INTERNALDATE":
-				if err = d.CheckType(tks[i+1], []TType{TQuoted}, tks, "after INTERNALDATE"); err != nil {
-					return nil, err
-				}
-				e.Received, err = time.Parse(TimeFormat, tks[i+1].Str)
-				if err != nil {
-					return nil, err
-				}
-				e.Received = e.Received.UTC()
-				skip++
-			case "RFC822.SIZE":
-				if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after RFC822.SIZE"); err != nil {
-					return nil, err
-				}
-				e.Size = uint64(tks[i+1].Num)
-				skip++
-			case "ENVELOPE":
-				CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
-					label = strings.ReplaceAll(label, "windows-", "cp")
-					encoding, _ := charset.Lookup(label)
-					return encoding.NewDecoder().Reader(input), nil
-				}
-				dec := mime.WordDecoder{CharsetReader: CharsetReader}
-
-				if err = d.CheckType(tks[i+1], []TType{TContainer}, tks, "after ENVELOPE"); err != nil {
-					return nil, err
-				}
-				if err = d.CheckType(tks[i+1].Tokens[EDate], []TType{TQuoted, TNil}, tks, "for ENVELOPE[%d]", EDate); err != nil {
-					return nil, err
-				}
-				if err = d.CheckType(tks[i+1].Tokens[ESubject], []TType{TQuoted, TAtom, TNil}, tks, "for ENVELOPE[%d]", ESubject); err != nil {
-					return nil, err
-				}
-
-				e.Sent, _ = time.Parse("Mon, _2 Jan 2006 15:04:05 -0700", tks[i+1].Tokens[EDate].Str)
-				e.Sent = e.Sent.UTC()
-
-				e.Subject, err = dec.DecodeHeader(tks[i+1].Tokens[ESubject].Str)
-				if err != nil {
-					return nil, err
-				}
-
-				for _, a := range []struct {
-					dest  *EmailAddresses
-					pos   uint8
-					debug string
-				}{
-					{&e.From, EFrom, "FROM"},
-					{&e.ReplyTo, EReplyTo, "REPLYTO"},
-					{&e.To, ETo, "TO"},
-					{&e.CC, ECC, "CC"},
-					{&e.BCC, EBCC, "BCC"},
-				} {
-					if tks[i+1].Tokens[a.pos].Type != TNil {
-						if err = d.CheckType(tks[i+1].Tokens[a.pos], []TType{TNil, TContainer}, tks, "for ENVELOPE[%d]", a.pos); err != nil {
-							return nil, err
-						}
-						*a.dest = make(map[string]string, len(tks[i+1].Tokens[a.pos].Tokens))
-						for i, t := range tks[i+1].Tokens[a.pos].Tokens {
-							if err = d.CheckType(t.Tokens[EEName], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEName); err != nil {
-								return nil, err
-							}
-							if err = d.CheckType(t.Tokens[EEMailbox], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEMailbox); err != nil {
-								return nil, err
-							}
-							if err = d.CheckType(t.Tokens[EEHost], []TType{TQuoted, TAtom, TNil}, tks, "for %s[%d][%d]", a.debug, i, EEHost); err != nil {
-								return nil, err
-							}
-
-							name, err := dec.DecodeHeader(t.Tokens[EEName].Str)
-							if err != nil {
-								return nil, err
-							}
-
-							mailbox, err := dec.DecodeHeader(t.Tokens[EEMailbox].Str)
-							if err != nil {
-								return nil, err
-							}
-
-							host, err := dec.DecodeHeader(t.Tokens[EEHost].Str)
-							if err != nil {
-								return nil, err
-							}
-
-							(*a.dest)[strings.ToLower(mailbox+"@"+host)] = name
-						}
-					}
-				}
-
-				e.MessageID = tks[i+1].Tokens[EMessageID].Str
-
-				skip++
-			case "UID":
-				if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
-					return nil, err
-				}
-				e.UID = tks[i+1].Num
-				skip++
-			}
-		}
-
 		if e.UID > 0 {
 			emails[e.UID] = e
 		}
