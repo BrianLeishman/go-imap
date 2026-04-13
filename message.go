@@ -225,6 +225,17 @@ func (d *Client) GetMaxUID(ctx context.Context) (uid UID, err error) {
 	return parseMaxUIDSearchResponse(r)
 }
 
+// restoreReadOnly re-EXAMINEs the current folder to restore read-only mode
+// after a temporary SELECT. The caller's ctx cancellation is detached so a
+// cancelled or timed-out mutation cannot leave the client stuck in
+// read-write mode; cleanupContext bounds the EXAMINE so a stalled server
+// cannot hang the call.
+func (d *Client) restoreReadOnly(ctx context.Context) error {
+	restoreCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	return d.ExamineFolder(restoreCtx, d.Folder)
+}
+
 // MoveEmail moves an email to a different folder.
 func (d *Client) MoveEmail(ctx context.Context, uid UID, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
@@ -234,7 +245,7 @@ func (d *Client) MoveEmail(ctx context.Context, uid UID, folder string) (err err
 	}
 	_, err = d.Exec(ctx, `UID MOVE `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		_ = d.ExamineFolder(ctx, d.Folder)
+		_ = d.restoreReadOnly(ctx)
 	}
 	if err != nil {
 		return err
@@ -255,7 +266,7 @@ func (d *Client) CopyEmail(ctx context.Context, uid UID, folder string) error {
 	}
 	_, err := d.Exec(ctx, `UID COPY `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
 	if readOnlyState {
-		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
+		if e := d.restoreReadOnly(ctx); e != nil && err == nil {
 			err = e
 		}
 	}
@@ -274,7 +285,7 @@ func (d *Client) MarkSeen(ctx context.Context, uid UID) (err error) {
 	}
 	err = d.SetFlags(ctx, uid, flags)
 	if readOnlyState {
-		_ = d.ExamineFolder(ctx, d.Folder)
+		_ = d.restoreReadOnly(ctx)
 	}
 
 	return err
@@ -294,7 +305,7 @@ func (d *Client) DeleteEmail(ctx context.Context, uid UID) (err error) {
 	}
 	err = d.SetFlags(ctx, uid, flags)
 	if readOnlyState {
-		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
+		if e := d.restoreReadOnly(ctx); e != nil && err == nil {
 			err = e
 		}
 	}
@@ -312,7 +323,7 @@ func (d *Client) Expunge(ctx context.Context) (err error) {
 	}
 	_, err = d.Exec(ctx, "EXPUNGE", false, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
+		if e := d.restoreReadOnly(ctx); e != nil && err == nil {
 			err = e
 		}
 	}
@@ -366,7 +377,7 @@ func (d *Client) SetFlags(ctx context.Context, uid UID, flags Flags) (err error)
 	}
 	_, err = d.Exec(ctx, query, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		_ = d.ExamineFolder(ctx, d.Folder)
+		_ = d.restoreReadOnly(ctx)
 	}
 
 	return err

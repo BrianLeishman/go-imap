@@ -6,14 +6,25 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 )
 
-// FolderStats represents statistics for a folder
-type FolderStats struct {
+// FolderStat represents statistics for a single folder.
+type FolderStat struct {
 	Name   string
 	Count  int
 	MaxUID UID
 	Error  error
+}
+
+// CountOptions configures folder iteration for TotalEmailCount and FolderStats.
+// The zero value walks every folder.
+type CountOptions struct {
+	// StartFolder skips folders returned by LIST before this one (matched by
+	// exact name). An empty value starts at the first folder.
+	StartFolder string
+	// ExcludeFolders names folders to skip entirely.
+	ExcludeFolders []string
 }
 
 // GetFolders retrieves the list of available folders.
@@ -134,123 +145,35 @@ func (d *Client) RenameFolder(ctx context.Context, oldName, newName string) erro
 	return nil
 }
 
-// GetTotalEmailCount returns the total email count across all folders.
-func (d *Client) GetTotalEmailCount(ctx context.Context) (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding(ctx, "", nil)
-}
-
-// GetTotalEmailCountExcluding returns total email count excluding specified folders.
-func (d *Client) GetTotalEmailCountExcluding(ctx context.Context, excludedFolders []string) (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding(ctx, "", excludedFolders)
-}
-
-// GetTotalEmailCountStartingFrom returns total email count starting from a specific folder.
-func (d *Client) GetTotalEmailCountStartingFrom(ctx context.Context, startFolder string) (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding(ctx, startFolder, nil)
-}
-
-// GetTotalEmailCountSafe returns total email count with error handling per folder.
-func (d *Client) GetTotalEmailCountSafe(ctx context.Context) (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding(ctx, "", nil)
-}
-
-// GetTotalEmailCountSafeExcluding returns total email count excluding folders with error handling.
-func (d *Client) GetTotalEmailCountSafeExcluding(ctx context.Context, excludedFolders []string) (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding(ctx, "", excludedFolders)
-}
-
-// GetTotalEmailCountSafeStartingFrom returns total email count starting from folder with error handling.
-func (d *Client) GetTotalEmailCountSafeStartingFrom(ctx context.Context, startFolder string) (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding(ctx, startFolder, nil)
-}
-
-// GetFolderStats returns statistics for all folders.
-func (d *Client) GetFolderStats(ctx context.Context) ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding(ctx, "", nil)
-}
-
-// GetFolderStatsExcluding returns statistics for folders excluding specified ones.
-func (d *Client) GetFolderStatsExcluding(ctx context.Context, excludedFolders []string) ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding(ctx, "", excludedFolders)
-}
-
-// GetFolderStatsStartingFrom returns statistics for folders starting from a specific one.
-func (d *Client) GetFolderStatsStartingFrom(ctx context.Context, startFolder string) ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding(ctx, startFolder, nil)
-}
-
-// GetTotalEmailCountStartingFromExcluding returns total email count with options for starting folder and exclusions.
-func (d *Client) GetTotalEmailCountStartingFromExcluding(ctx context.Context, startFolder string, excludedFolders []string) (count int, err error) {
-	folders, err := d.GetFolders(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
-		excludeMap[folder] = true
-	}
-
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
-
-	for _, folder := range folders {
-		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
-				continue
-			}
-		}
-
-		if excludeMap[folder] {
-			continue
-		}
-
-		folderCount, err := d.selectAndGetCount(ctx, folder)
-		if err == nil {
-			count += folderCount
-		}
-	}
-
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(ctx, currentFolder)
-		} else {
-			_ = d.SelectFolder(ctx, currentFolder)
-		}
-	}
-
-	return count, nil
-}
-
-// GetTotalEmailCountSafeStartingFromExcluding returns total email count with per-folder error handling.
-func (d *Client) GetTotalEmailCountSafeStartingFromExcluding(ctx context.Context, startFolder string, excludedFolders []string) (count int, folderErrors []error, err error) {
+// TotalEmailCount sums message counts across folders. Per-folder failures
+// are reported in folderErrors but do not abort iteration. err is non-nil
+// if the initial folder list could not be retrieved or if ctx is cancelled
+// mid-iteration; in the latter case count and folderErrors hold the
+// partial result accumulated before cancellation.
+func (d *Client) TotalEmailCount(ctx context.Context, opts CountOptions) (count int, folderErrors []error, err error) {
 	folders, err := d.GetFolders(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
+	excludeMap := make(map[string]bool, len(opts.ExcludeFolders))
+	for _, folder := range opts.ExcludeFolders {
 		excludeMap[folder] = true
 	}
 
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
+	defer d.restoreSelection(ctx, d.Folder, d.ReadOnly)
 
+	startFound := opts.StartFolder == ""
 	for _, folder := range folders {
+		if cerr := ctx.Err(); cerr != nil {
+			return count, folderErrors, cerr
+		}
 		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
+			if folder != opts.StartFolder {
 				continue
 			}
+			startFound = true
 		}
-
 		if excludeMap[folder] {
 			continue
 		}
@@ -263,52 +186,42 @@ func (d *Client) GetTotalEmailCountSafeStartingFromExcluding(ctx context.Context
 		count += folderCount
 	}
 
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(ctx, currentFolder)
-		} else {
-			_ = d.SelectFolder(ctx, currentFolder)
-		}
-	}
-
 	return count, folderErrors, nil
 }
 
-// GetFolderStatsStartingFromExcluding returns detailed statistics for folders with options.
-func (d *Client) GetFolderStatsStartingFromExcluding(ctx context.Context, startFolder string, excludedFolders []string) ([]FolderStats, error) {
+// FolderStats returns per-folder statistics. Per-folder failures are reported
+// in FolderStat.Error rather than aborting the iteration. If ctx is cancelled
+// mid-iteration the partial slice is returned with ctx.Err().
+func (d *Client) FolderStats(ctx context.Context, opts CountOptions) ([]FolderStat, error) {
 	folders, err := d.GetFolders(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
+	excludeMap := make(map[string]bool, len(opts.ExcludeFolders))
+	for _, folder := range opts.ExcludeFolders {
 		excludeMap[folder] = true
 	}
 
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
+	defer d.restoreSelection(ctx, d.Folder, d.ReadOnly)
 
-	var stats []FolderStats
-
+	var stats []FolderStat
+	startFound := opts.StartFolder == ""
 	for _, folder := range folders {
+		if cerr := ctx.Err(); cerr != nil {
+			return stats, cerr
+		}
 		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
+			if folder != opts.StartFolder {
 				continue
 			}
+			startFound = true
 		}
-
 		if excludeMap[folder] {
 			continue
 		}
 
-		stat := FolderStats{Name: folder}
-
-		// Get message count using helper function
+		stat := FolderStat{Name: folder}
 		count, err := d.selectAndGetCount(ctx, folder)
 		if err != nil {
 			stat.Error = err
@@ -317,7 +230,6 @@ func (d *Client) GetFolderStatsStartingFromExcluding(ctx context.Context, startF
 		}
 		stat.Count = count
 
-		// Get highest UID
 		if stat.Count > 0 {
 			uidResponse, err := d.Exec(ctx, "UID SEARCH ALL", true, d.effectiveRetryCount(), nil)
 			if err == nil {
@@ -331,14 +243,32 @@ func (d *Client) GetFolderStatsStartingFromExcluding(ctx context.Context, startF
 		stats = append(stats, stat)
 	}
 
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(ctx, currentFolder)
-		} else {
-			_ = d.SelectFolder(ctx, currentFolder)
-		}
-	}
-
 	return stats, nil
+}
+
+// restoreSelection re-selects the previously selected folder (if any) using
+// the original read-only/read-write mode. The caller's context cancellation
+// is intentionally detached so a cancelled or timed-out iteration does not
+// leave the client selected on an unrelated mailbox; an explicit cleanup
+// deadline still bounds the SELECT/EXAMINE so a stalled server cannot
+// block the call forever.
+func (d *Client) restoreSelection(ctx context.Context, folder string, readOnly bool) {
+	if folder == "" {
+		return
+	}
+	restoreCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if readOnly {
+		_ = d.ExamineFolder(restoreCtx, folder)
+	} else {
+		_ = d.SelectFolder(restoreCtx, folder)
+	}
+}
+
+// cleanupContext returns a derived context suitable for best-effort cleanup
+// after the caller's ctx has been cancelled or timed out. Cancellation is
+// detached (so the cleanup runs to completion) but a fallback deadline is
+// applied so a stalled server cannot hang the cleanup indefinitely.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 }

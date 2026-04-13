@@ -70,12 +70,14 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	stop := d.watchCtxCancel(ctx)
+	defer func() {
+		stop()
+		_ = d.conn.SetDeadline(time.Time{})
+	}()
 	if deadline, ok := d.deadlineFromCtx(ctx); ok {
 		_ = d.conn.SetDeadline(deadline)
-		defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
 	}
-	stop := d.watchCtxCancel(ctx)
-	defer stop()
 
 	if Verbose {
 		debugLog(d.ConnNum, d.Folder, "sending command", "command", string(tag)+" "+cmd)

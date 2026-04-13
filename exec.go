@@ -62,13 +62,17 @@ func (d *Client) deadlineFromCtx(ctx context.Context) (time.Time, bool) {
 // watchCtxCancel spawns a goroutine that forces the connection's deadline
 // into the past when ctx is canceled, causing any blocked read/write to
 // return promptly. The returned stop function must be called when the
-// command completes to tear the watchdog down.
+// command completes to tear the watchdog down. stop blocks until the
+// watchdog goroutine has exited so it cannot race with a subsequent
+// SetDeadline reset.
 func (d *Client) watchCtxCancel(ctx context.Context) (stop func()) {
 	if ctx.Done() == nil {
 		return func() {}
 	}
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		select {
 		case <-ctx.Done():
 			// time.Unix(1, 0) is well in the past; any in-flight I/O
@@ -77,7 +81,10 @@ func (d *Client) watchCtxCancel(ctx context.Context) (stop func()) {
 		case <-done:
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-exited
+	}
 }
 
 // execOnce runs a single attempt of an IMAP command
@@ -89,13 +96,18 @@ func (d *Client) execOnce(ctx context.Context, command string, buildResponse boo
 		return resp, err
 	}
 
+	// Stop the watchdog and clear any deadline (whether set explicitly above
+	// or by the watchdog on cancellation) before returning, so a late ctx
+	// cancel can't leave the socket poisoned with an expired deadline.
+	stop := d.watchCtxCancel(ctx)
+	defer func() {
+		stop()
+		_ = d.conn.SetDeadline(time.Time{})
+	}()
+
 	if deadline, ok := d.deadlineFromCtx(ctx); ok {
 		_ = d.conn.SetDeadline(deadline)
-		defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
 	}
-
-	stop := d.watchCtxCancel(ctx)
-	defer stop()
 
 	c := fmt.Sprintf("%s %s\r\n", tag, command)
 

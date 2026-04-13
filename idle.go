@@ -167,6 +167,13 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 	d.idleDone = make(chan struct{})
 	idleReady := make(chan struct{})
 
+	// Detach the IDLE Exec from the caller's ctx. The outer monitor in
+	// StartIdle reacts to ctx cancellation by calling StopIdle, which sends
+	// DONE and lets the server reply with the tagged OK that ends Exec
+	// cleanly. Passing ctx directly into Exec would instead force a deadline
+	// past, close the socket, and leave the client disconnected.
+	execCtx := context.WithoutCancel(ctx)
+
 	go func() {
 		defer func() {
 			close(d.idleStop)
@@ -175,7 +182,7 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 			}
 		}()
 
-		_, err := d.Exec(ctx, "IDLE", true, 0, func(line []byte) error {
+		_, err := d.Exec(execCtx, "IDLE", true, 0, func(line []byte) error {
 			line = []byte(strings.ToUpper(string(line)))
 			switch {
 			case bytes.HasPrefix(line, []byte("+")):
@@ -211,6 +218,14 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 	select {
 	case <-idleReady:
 		return nil
+	case <-ctx.Done():
+		// Caller cancelled before the server's "+ idling" arrived. Close
+		// the socket to unblock the orphaned Exec goroutine (its execCtx
+		// is detached and will not observe cancellation on its own).
+		_ = d.Close()
+		d.setState(StateDisconnected)
+		<-d.idleStop
+		return ctx.Err()
 	case <-time.After(5 * time.Second):
 		d.setState(StateSelected)
 		return fmt.Errorf("timeout waiting for + IDLE response")

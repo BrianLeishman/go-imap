@@ -49,7 +49,8 @@ func main() {
     // For self-signed certificates (use with caution!)
     // imap.TLSSkipVerify = true
 
-    c, err := imap.Dial(context.Background(), imap.Options{
+    ctx := context.Background()
+    c, err := imap.Dial(ctx, imap.Options{
         Host:           "mail.server.com",
         Port:           993,
         Auth:           imap.PasswordAuth{Username: "username", Password: "password"},
@@ -60,7 +61,7 @@ func main() {
     if err != nil { panic(err) }
     defer c.Close()
 
-    folders, err := c.GetFolders()
+    folders, err := c.GetFolders(ctx)
     if err != nil { panic(err) }
     fmt.Printf("Connected! Found %d folders\n", len(folders))
 }
@@ -69,7 +70,8 @@ func main() {
 ### OAuth 2.0 Authentication (XOAUTH2)
 
 ```go
-c, err := imap.Dial(context.Background(), imap.Options{
+ctx := context.Background()
+c, err := imap.Dial(ctx, imap.Options{
     Host: "imap.gmail.com",
     Port: 993,
     Auth: imap.XOAuth2{Username: "user@example.com", AccessToken: accessToken},
@@ -78,7 +80,7 @@ if err != nil { panic(err) }
 defer c.Close()
 
 // The OAuth2 connection works exactly like LOGIN after authentication.
-if err := c.SelectFolder("INBOX"); err != nil { panic(err) }
+if err := c.SelectFolder(ctx, "INBOX"); err != nil { panic(err) }
 ```
 
 ## Logging
@@ -177,22 +179,12 @@ if err != nil { panic(err) }
 err = m.ExamineFolder(ctx, "INBOX")
 if err != nil { panic(err) }
 
-// Get total email count across all folders
-totalCount, err := m.GetTotalEmailCount(ctx)
+// Total email count across all folders. Per-folder failures (common with
+// Gmail's virtual system folders) are returned in folderErrors and do NOT
+// abort the iteration; err is only non-nil if the folder list itself fails.
+totalCount, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{})
 if err != nil { panic(err) }
-fmt.Printf("Total emails in all folders: %d\n", totalCount)
-
-// Get count excluding certain folders
-excludedFolders := []string{"Trash", "[Gmail]/Spam"}
-count, err := m.GetTotalEmailCountExcluding(ctx, excludedFolders)
-if err != nil { panic(err) }
-fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
-
-// Error-tolerant counting (continues even if some folders fail)
-// This is especially useful with Gmail or other providers that have inaccessible system folders
-safeCount, folderErrors, err := m.GetTotalEmailCountSafe(ctx)
-if err != nil { panic(err) }
-fmt.Printf("Total accessible emails: %d\n", safeCount)
+fmt.Printf("Total accessible emails: %d\n", totalCount)
 
 if len(folderErrors) > 0 {
     fmt.Printf("Note: %d folders had errors:\n", len(folderErrors))
@@ -206,6 +198,13 @@ if len(folderErrors) > 0 {
 //   - folder "[Gmail]": NO [NONEXISTENT] Unknown Mailbox
 //   - folder "[Gmail]/All Mail": NO [NONEXISTENT] Unknown Mailbox
 
+// Count excluding certain folders
+count, _, err := m.TotalEmailCount(ctx, imap.CountOptions{
+    ExcludeFolders: []string{"Trash", "[Gmail]/Spam"},
+})
+if err != nil { panic(err) }
+fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
+
 // Create, rename, and delete folders
 err = m.CreateFolder(ctx, "INBOX/Projects")
 if err != nil { panic(err) }
@@ -217,7 +216,7 @@ err = m.DeleteFolder(ctx, "INBOX/Archive")
 if err != nil { panic(err) }
 
 // Get detailed statistics for each folder (includes max UID)
-stats, err := m.GetFolderStats(ctx)
+stats, err := m.FolderStats(ctx, imap.CountOptions{})
 if err != nil { panic(err) }
 
 fmt.Printf("Found %d folders:\n", len(stats))
@@ -243,45 +242,36 @@ for _, stat := range stats {
 
 ### 1.1. Handling Problematic Folders
 
-Some IMAP servers (especially Gmail) have special system folders that cannot be examined or may return errors. The traditional `GetTotalEmailCount()` method will fail completely if any folder is inaccessible, but the new safe methods continue processing other folders.
+Some IMAP servers (especially Gmail) have special system folders that cannot be examined or may return errors. `TotalEmailCount` and `FolderStats` are designed to tolerate these: per-folder failures are returned alongside the partial result rather than aborting the iteration. The top-level `err` is only set if the initial folder list cannot be retrieved.
 
-#### When to Use Safe Methods
+#### When per-folder errors show up
 
-- **Gmail users**: Gmail's `[Gmail]` folder often returns "NO [NONEXISTENT] Unknown Mailbox"
+- **Gmail users**: The `[Gmail]` folder often returns "NO [NONEXISTENT] Unknown Mailbox"
 - **Exchange/Office 365**: Some system folders may be restricted
 - **Custom IMAP servers**: Servers with permission-restricted folders
-- **Production applications**: When you need reliable email counting despite folder issues
 
 ```go
-// Traditional approach - fails if ANY folder has issues
-totalCount, err := m.GetTotalEmailCount(ctx)
-if err != nil {
-    // This will fail completely if "[Gmail]" folder is inaccessible
-    fmt.Printf("Count failed: %v\n", err)
-    // Output: Count failed: EXAMINE command failed: NO [NONEXISTENT] Unknown Mailbox
-}
-
-// Safe approach - continues despite folder errors
-safeCount, folderErrors, err := m.GetTotalEmailCountSafe(ctx)
+// Per-folder failures are reported, not raised
+totalCount, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{})
 if err != nil {
     // Only fails on serious connection issues, not individual folder problems
     panic(err)
 }
 
-fmt.Printf("Counted %d emails from accessible folders\n", safeCount)
+fmt.Printf("Counted %d emails from accessible folders\n", totalCount)
 if len(folderErrors) > 0 {
     fmt.Printf("Skipped %d problematic folders\n", len(folderErrors))
 }
 
-// Safe exclusion - combine error tolerance with folder filtering
-excludedFolders := []string{"Trash", "Junk", "Deleted Items"}
-count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(ctx, excludedFolders)
+// Combine error tolerance with folder filtering
+count, _, err := m.TotalEmailCount(ctx, imap.CountOptions{
+    ExcludeFolders: []string{"Trash", "Junk", "Deleted Items"},
+})
 if err != nil { panic(err) }
+fmt.Printf("Active emails: %d (excluding trash/spam)\n", count)
 
-fmt.Printf("Active emails: %d (excluding trash/spam and skipping errors)\n", count)
-
-// Detailed analysis with error handling
-stats, err := m.GetFolderStats(ctx)
+// Detailed analysis with per-folder error handling
+stats, err := m.FolderStats(ctx, imap.CountOptions{})
 if err != nil { panic(err) }
 
 accessibleFolders := 0
@@ -311,7 +301,7 @@ fmt.Printf("\nSummary: %d/%d folders accessible, %d total emails, highest UID: %
 #### Error Types You Might Encounter
 
 ```go
-stats, err := m.GetFolderStats(ctx)
+stats, err := m.FolderStats(ctx, imap.CountOptions{})
 if err != nil { panic(err) }
 
 for _, stat := range stats {

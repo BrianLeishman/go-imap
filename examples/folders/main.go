@@ -99,21 +99,14 @@ func demonstrateFolderManagement(m *imap.Client) {
 func demonstrateEmailCounts(m *imap.Client) error {
 	fmt.Println("\n--- Email Counts ---")
 
-	// Get total email count across all folders (traditional approach)
-	totalCount, err := m.GetTotalEmailCount(ctx)
+	// Total email count across all folders. Per-folder failures are reported
+	// in folderErrors so that one inaccessible folder (common with Gmail
+	// system folders) does not abort the entire count.
+	totalCount, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{})
 	if err != nil {
-		fmt.Printf("Traditional count failed: %v\n", err)
-		fmt.Println("This might happen with Gmail or other providers that have inaccessible system folders")
-	} else {
-		fmt.Printf("Total emails in all folders: %d\n", totalCount)
+		return fmt.Errorf("failed to get total email count: %w", err)
 	}
-
-	// Get total email count with robust error handling
-	safeCount, folderErrors, err := m.GetTotalEmailCountSafe(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get safe total email count: %w", err)
-	}
-	fmt.Printf("Total emails (safe count): %d\n", safeCount)
+	fmt.Printf("Total emails in all folders: %d\n", totalCount)
 
 	if len(folderErrors) > 0 {
 		fmt.Printf("Note: %d folders had errors:\n", len(folderErrors))
@@ -122,9 +115,10 @@ func demonstrateEmailCounts(m *imap.Client) error {
 		}
 	}
 
-	// Get count excluding certain folders (safe version)
-	excludedFolders := []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"}
-	count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(ctx, excludedFolders)
+	// Count excluding certain folders.
+	count, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{
+		ExcludeFolders: []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to get filtered email count: %w", err)
 	}
@@ -134,9 +128,8 @@ func demonstrateEmailCounts(m *imap.Client) error {
 		fmt.Printf("Folders with errors during exclusion count: %d\n", len(folderErrors))
 	}
 
-	// Calculate percentage
-	if safeCount > 0 {
-		percentage := float64(count) / float64(safeCount) * 100
+	if totalCount > 0 {
+		percentage := float64(count) / float64(totalCount) * 100
 		fmt.Printf("That's %.1f%% of your total emails\n", percentage)
 	}
 
@@ -146,7 +139,7 @@ func demonstrateEmailCounts(m *imap.Client) error {
 func demonstrateFolderStats(m *imap.Client) error {
 	fmt.Println("\n--- Detailed Folder Statistics ---")
 
-	stats, err := m.GetFolderStats(ctx)
+	stats, err := m.FolderStats(ctx, imap.CountOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get folder statistics: %w", err)
 	}

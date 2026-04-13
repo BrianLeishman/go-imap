@@ -3,7 +3,6 @@ package imap
 import (
 	"context"
 	"crypto/tls"
-	"log/slog"
 	"net"
 	"time"
 )
@@ -51,10 +50,6 @@ type Options struct {
 	// Dialer overrides the default *net.Dialer used to establish the TCP
 	// connection. Useful for SOCKS proxies or custom network setups.
 	Dialer ContextDialer
-
-	// Logger is the slog logger used for all library output. When nil, the
-	// package-level logger is used (see SetSlogLogger).
-	Logger *slog.Logger
 }
 
 // Authenticator performs IMAP authentication after the TLS connection is
