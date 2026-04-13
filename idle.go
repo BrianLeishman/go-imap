@@ -24,7 +24,6 @@ const (
 	StateStoppingIdle
 )
 
-// String returns the human-readable name of the state.
 func (s State) String() string {
 	switch s {
 	case StateDisconnected:
@@ -249,10 +248,7 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 		<-d.idleStop
 		return ctx.Err()
 	case <-time.After(5 * time.Second):
-		// Server never sent "+ idling". Close the socket to unblock the
-		// detached Exec goroutine and wait for it to exit before returning;
-		// otherwise the goroutine leaks and the Client is left in an
-		// indeterminate IDLE state.
+		// Close to unblock the detached Exec goroutine; otherwise it leaks.
 		_ = d.Close()
 		d.setState(StateDisconnected)
 		<-d.idleStop

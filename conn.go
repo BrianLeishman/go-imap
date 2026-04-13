@@ -347,8 +347,7 @@ func (d *Client) Reconnect(ctx context.Context) error {
 
 	if d.auth != nil {
 		if err := d.auth.authenticate(ctx, d); err != nil {
-			_ = d.conn.Close()
-			d.Connected = false
+			_ = d.Close()
 			return fmt.Errorf("imap reconnect auth: %w", err)
 		}
 	}
@@ -356,14 +355,12 @@ func (d *Client) Reconnect(ctx context.Context) error {
 	if d.Folder != "" {
 		if d.ReadOnly {
 			if err := d.ExamineFolder(ctx, d.Folder); err != nil {
-				_ = d.conn.Close()
-				d.Connected = false
+				_ = d.Close()
 				return fmt.Errorf("imap reconnect examine: %w", err)
 			}
 		} else {
 			if err := d.SelectFolder(ctx, d.Folder); err != nil {
-				_ = d.conn.Close()
-				d.Connected = false
+				_ = d.Close()
 				return fmt.Errorf("imap reconnect select: %w", err)
 			}
 		}

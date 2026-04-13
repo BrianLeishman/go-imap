@@ -181,11 +181,11 @@ func TestSetState_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
-		go func(state int) {
+		go func(s State) {
 			defer wg.Done()
-			d.setState(State(state % 6))
+			d.setState(s)
 			_ = d.State()
-		}(i)
+		}(State(i % 6))
 	}
 	wg.Wait()
 }

@@ -390,7 +390,7 @@ func (d *Client) parseEmailBody(e *Email, bodyStr string) bool {
 	if err != nil {
 		if Verbose {
 			warnLog(d.ConnNum, d.Folder, "email body could not be parsed",
-				"error", err, "envelope", fmt.Sprintf("%+v", env), "body", bodyStr)
+				"error", err, "body", bodyStr)
 		}
 		return false
 	}
