@@ -93,6 +93,11 @@ func parseAtomLiteral(r string, i, tokenStart int) (newTokenStart, tokenEnd, new
 		if i >= len(r) || r[i] != '}' {
 			return 0, 0, 0, fmt.Errorf("expected '}' after '+' in literal at char %d in %s", i, r)
 		}
+	} else if b != '}' {
+		// Any non-digit byte after '{<digits>' must be '}' (or '+}').
+		// Accepting anything else silently misparses malformed headers
+		// like "{5Xabcde" as a 5-byte literal starting after 'X'.
+		return 0, 0, 0, fmt.Errorf("expected '}' or '+}' after literal size at char %d, got %q in %s", i, b, r)
 	}
 	// tokenStart for size was set when '{' was seen. r[tokenStart:tokenEndOfSize] is the size string.
 	sizeVal, err := strconv.Atoi(string(r[tokenStart:tokenEndOfSize]))
@@ -191,6 +196,10 @@ func (s *fetchParserState) handleActiveToken(r string, b byte, i int, pushToken 
 			s.tokenEnd = tokenEnd
 			i = newI
 			pushToken()
+			// parseAtomLiteral consumed the terminating '}' (or '+}')
+			// plus the literal body, so `b` no longer corresponds to
+			// the current position — skip the unset re-dispatch.
+			return i, true, nil
 		}
 	}
 	return i, false, nil
@@ -550,18 +559,23 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 	return 0, fmt.Errorf("no ESEARCH line. rfc4731 not supported?")
 }
 
-// IsLiteral checks if a rune is valid for a literal token
+// IsLiteral checks if a rune is valid for a literal token.
+//
+// This matches RFC 3501 ATOM-CHAR (plus '\' and ']' for flag and
+// BODY[...] syntax): any character except atom-specials
+// ("(", ")", "{", SP, CTL, list-wildcards, quoted-specials). Custom
+// IMAP keyword flags commonly use '$', '-', '_', '+', etc. — rejecting
+// those chars caused flags like "$X-ME-Annot-2" (Fastmail) to be split
+// across multiple tokens. See issue #90.
 func IsLiteral(b rune) bool {
-	switch {
-	case unicode.IsDigit(b),
-		unicode.IsLetter(b),
-		b == '\\',
-		b == '.',
-		b == '[',
-		b == ']':
-		return true
+	switch b {
+	case '(', ')', '{', ' ', '%', '*', '"':
+		return false
 	}
-	return false
+	if b < 0x20 || b == 0x7f {
+		return false
+	}
+	return true
 }
 
 // GetTokenName returns the string name of a token type
