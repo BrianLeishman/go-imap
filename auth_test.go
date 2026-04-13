@@ -19,6 +19,7 @@ import (
 	"time"
 )
 
+
 type mockIMAPServer struct {
 	listener       net.Listener
 	address        string
@@ -404,11 +405,11 @@ func TestReconnectWithBadCredentials(t *testing.T) {
 	defer d.Close()
 
 	// Change password to simulate bad credentials on reconnect
-	d.Password = "wrongpass"
+	d.SetAuth(PasswordAuth{Username: "testuser", Password: "wrongpass"})
 	server.ResetAuthAttempts()
 
 	// Attempt reconnect with bad credentials
-	err = d.Reconnect()
+	err = d.Reconnect(ctx)
 	if err == nil {
 		t.Error("Expected reconnect to fail with bad credentials")
 	}

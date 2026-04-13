@@ -3,6 +3,7 @@ package imap
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 
 // waitForTaggedOK reads lines from r until it finds the tagged response matching tag.
 // It returns nil if the response is OK, or an error otherwise.
-func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
+func (d *Client) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 	taglen := len(tag)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -49,8 +50,8 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 // Example:
 //
 //	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
-//	err := conn.Append("INBOX", []string{`\Seen`}, time.Time{}, msg)
-func (d *Dialer) Append(folder string, flags []string, date time.Time, message []byte) error {
+//	err := conn.Append(ctx, "INBOX", []string{`\Seen`}, time.Time{}, msg)
+func (d *Client) Append(ctx context.Context, folder string, flags []string, date time.Time, message []byte) error {
 	// Build the APPEND command prefix
 	flagStr := ""
 	if len(flags) > 0 {
@@ -66,10 +67,15 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 
 	tag := []byte(strings.ToUpper(xid.New().String()))
 
-	if CommandTimeout != 0 {
-		_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := d.deadlineFromCtx(ctx); ok {
+		_ = d.conn.SetDeadline(deadline)
 		defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
 	}
+	stop := d.watchCtxCancel(ctx)
+	defer stop()
 
 	if Verbose {
 		debugLog(d.ConnNum, d.Folder, "sending command", "command", string(tag)+" "+cmd)
@@ -78,7 +84,8 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	// Phase 1: Send the APPEND command with literal size
 	_, err := fmt.Fprintf(d.conn, "%s %s\r\n", tag, cmd)
 	if err != nil {
-		return fmt.Errorf("imap append write command: %w", err)
+		_ = d.Close()
+		return fmt.Errorf("imap append write command: %w", wrapCtxErr(ctx, err))
 	}
 
 	// Phase 2: Wait for continuation response (+)
@@ -86,7 +93,7 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	line, err := r.ReadBytes('\n')
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append read continuation: %w", err)
+		return fmt.Errorf("imap append read continuation: %w", wrapCtxErr(ctx, err))
 	}
 
 	if Verbose && !SkipResponses {
@@ -101,14 +108,17 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	_, err = d.conn.Write(message)
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write literal: %w", err)
+		return fmt.Errorf("imap append write literal: %w", wrapCtxErr(ctx, err))
 	}
 	_, err = d.conn.Write([]byte("\r\n"))
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write crlf: %w", err)
+		return fmt.Errorf("imap append write crlf: %w", wrapCtxErr(ctx, err))
 	}
 
 	// Phase 4: Read the tagged response
-	return d.waitForTaggedOK(r, tag)
+	if err := d.waitForTaggedOK(r, tag); err != nil {
+		return wrapCtxErr(ctx, err)
+	}
+	return nil
 }

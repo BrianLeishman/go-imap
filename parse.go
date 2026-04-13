@@ -439,7 +439,7 @@ func extractFetchContent(body string, start int) (fetchContentStart, fetchConten
 }
 
 // ParseFetchResponse parses a multi-line FETCH response
-func (d *Dialer) ParseFetchResponse(responseBody string) (records [][]*Token, err error) {
+func (d *Client) ParseFetchResponse(responseBody string) (records [][]*Token, err error) {
 	records = make([][]*Token, 0)
 	trimmedResponseBody := strings.TrimSpace(responseBody)
 	if trimmedResponseBody == "" {
@@ -618,7 +618,7 @@ func (t Token) String() string {
 }
 
 // CheckType validates that a token is one of the acceptable types
-func (d *Dialer) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...any) (err error) {
+func (d *Client) CheckType(token *Token, acceptableTypes []TType, tks []*Token, loc string, v ...any) (err error) {
 	if slices.Contains(acceptableTypes, token.Type) {
 		return nil
 	}

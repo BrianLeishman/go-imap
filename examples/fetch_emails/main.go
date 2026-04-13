@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -8,13 +9,19 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func connectAndSelectInbox() (*imap.Dialer, error) {
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+var ctx = context.Background()
+
+func connectAndSelectInbox() (*imap.Client, error) {
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 
-	err = m.SelectFolder("INBOX")
+	err = m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		_ = m.Close()
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
@@ -23,10 +30,10 @@ func connectAndSelectInbox() (*imap.Dialer, error) {
 	return m, nil
 }
 
-func fetchOverviews(m *imap.Dialer, uids []int) error {
+func fetchOverviews(m *imap.Client, uids []int) error {
 	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===")
 
-	overviews, err := m.GetOverviews(uids...)
+	overviews, err := m.GetOverviews(ctx, uids...)
 	if err != nil {
 		return fmt.Errorf("failed to get overviews: %w", err)
 	}
@@ -85,7 +92,7 @@ func printAttachments(email *imap.Email) {
 	}
 }
 
-func fetchFullEmails(m *imap.Dialer, uids []int) (map[int]*imap.Email, error) {
+func fetchFullEmails(m *imap.Client, uids []int) (map[int]*imap.Email, error) {
 	fmt.Println("=== Fetching Full Emails (With Bodies - SLOWER) ===")
 
 	// Limit to first 3 for full fetch (to keep example fast)
@@ -94,7 +101,7 @@ func fetchFullEmails(m *imap.Dialer, uids []int) (map[int]*imap.Email, error) {
 		fetchUIDs = uids[:3]
 	}
 
-	emails, err := m.GetEmails(fetchUIDs...)
+	emails, err := m.GetEmails(ctx, fetchUIDs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get emails: %w", err)
 	}
@@ -168,7 +175,7 @@ func main() {
 		}
 	}()
 
-	uids, err := m.GetUIDs("1:5") // Get first 5 emails
+	uids, err := m.GetUIDs(ctx, "1:5") // Get first 5 emails
 	if err != nil {
 		log.Fatalf("Failed to get UIDs: %v", err)
 	}

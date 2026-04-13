@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -8,11 +9,10 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
+var ctx = context.Background()
+
 func main() {
 	fmt.Println("=== Error Handling and Reconnection Example ===")
-
-	// Configure retry and timeout behavior
-	configureLibrarySettings()
 
 	// Example 1: Handle connection errors
 	handleConnectionErrors()
@@ -27,33 +27,26 @@ func main() {
 	timeoutConfiguration()
 }
 
-func configureLibrarySettings() {
-	fmt.Println("1. Configuring Library Settings")
-	fmt.Println("--------------------------------")
-
-	// Set retry configuration
-	imap.RetryCount = 5 // Will retry failed operations 5 times
-	fmt.Printf("RetryCount set to: %d\n", imap.RetryCount)
-
-	// Enable verbose mode to see what's happening
-	imap.Verbose = false // Set to true to see all IMAP commands/responses
-	fmt.Printf("Verbose mode: %v\n", imap.Verbose)
-
-	// Configure timeouts
-	imap.DialTimeout = 10 * time.Second    // Connection timeout
-	imap.CommandTimeout = 30 * time.Second // Individual command timeout
-	fmt.Printf("DialTimeout: %v\n", imap.DialTimeout)
-	fmt.Printf("CommandTimeout: %v\n", imap.CommandTimeout)
-
-	fmt.Println()
+// baseOptions returns the options used across examples. Replace host, port,
+// and credentials with your own.
+func baseOptions(username, password, host string) imap.Options {
+	return imap.Options{
+		Host:           host,
+		Port:           993,
+		Auth:           imap.PasswordAuth{Username: username, Password: password},
+		DialTimeout:    10 * time.Second,
+		CommandTimeout: 30 * time.Second,
+		RetryCount:     5,
+	}
 }
 
 func handleConnectionErrors() {
-	fmt.Println("2. Handling Connection Errors")
+	fmt.Println("1. Handling Connection Errors")
 	fmt.Println("------------------------------")
+	ctx := context.Background()
 
 	// Try to connect with invalid credentials (will fail)
-	m, err := imap.New("invalid-user", "invalid-pass", "imap.gmail.com", 993)
+	m, err := imap.Dial(ctx, baseOptions("invalid-user", "invalid-pass", "imap.gmail.com"))
 	if err != nil {
 		fmt.Printf("Expected error occurred: %v\n", err)
 		fmt.Println("This is how you handle initial connection failures")
@@ -67,7 +60,7 @@ func handleConnectionErrors() {
 	}
 
 	// Try to connect to non-existent server
-	m, err = imap.New("user", "pass", "non-existent-server.invalid", 993)
+	m, err = imap.Dial(ctx, baseOptions("user", "pass", "non-existent-server.invalid"))
 	if err != nil {
 		fmt.Printf("Expected error for invalid server: %v\n", err)
 	} else {
@@ -82,11 +75,12 @@ func handleConnectionErrors() {
 }
 
 func robustEmailFetch() {
-	fmt.Println("3. Robust Email Fetching")
+	fmt.Println("2. Robust Email Fetching")
 	fmt.Println("-------------------------")
 
+	ctx := context.Background()
 	// NOTE: Replace with your actual credentials and server
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+	m, err := imap.Dial(ctx, baseOptions("username", "password", "mail.server.com"))
 	if err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 		fmt.Println("Skipping robust fetch example (need valid credentials)")
@@ -111,16 +105,15 @@ func robustEmailFetch() {
 	fmt.Println()
 
 	// Select folder with automatic retry
-	err = m.SelectFolder("INBOX")
+	err = m.SelectFolder(ctx, "INBOX")
 	if err != nil {
-		// This only fails after all retries are exhausted
-		fmt.Printf("Failed to select folder after %d retries: %v\n", imap.RetryCount, err)
+		fmt.Printf("Failed to select folder: %v\n", err)
 		return
 	}
 	fmt.Println("Selected INBOX successfully")
 
 	// Fetch emails with automatic retry on network issues
-	uids, err := m.GetUIDs("1:5")
+	uids, err := m.GetUIDs(ctx, "1:5")
 	if err != nil {
 		fmt.Printf("Search failed after retries: %v\n", err)
 		return
@@ -128,8 +121,7 @@ func robustEmailFetch() {
 	fmt.Printf("Found %d UIDs with automatic retry support\n", len(uids))
 
 	if len(uids) > 0 {
-		// Fetch emails - will automatically retry on failure
-		emails, err := m.GetEmails(uids[0])
+		emails, err := m.GetEmails(ctx, uids[0])
 		if err != nil {
 			fmt.Printf("Fetch failed after retries: %v\n", err)
 		} else {
@@ -146,11 +138,11 @@ func robustEmailFetch() {
 }
 
 func manualReconnection() {
-	fmt.Println("4. Manual Reconnection")
+	fmt.Println("3. Manual Reconnection")
 	fmt.Println("-----------------------")
 
-	// NOTE: Replace with your actual credentials and server
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+	ctx := context.Background()
+	m, err := imap.Dial(ctx, baseOptions("username", "password", "mail.server.com"))
 	if err != nil {
 		fmt.Printf("Failed to connect: %v\n", err)
 		fmt.Println("Skipping manual reconnection example (need valid credentials)")
@@ -165,21 +157,16 @@ func manualReconnection() {
 
 	fmt.Println("Connected successfully!")
 
-	// Select a folder
-	err = m.SelectFolder("INBOX")
+	err = m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		fmt.Printf("Failed to select folder: %v\n", err)
-
-		// You can manually trigger a reconnection
 		fmt.Println("Attempting manual reconnection...")
-		if err := m.Reconnect(); err != nil {
+		if err := m.Reconnect(ctx); err != nil {
 			fmt.Printf("Manual reconnection failed: %v\n", err)
 			return
 		}
 		fmt.Println("Reconnected successfully!")
-
-		// Try selecting folder again
-		if err := m.SelectFolder("INBOX"); err != nil {
+		if err := m.SelectFolder(ctx, "INBOX"); err != nil {
 			fmt.Printf("Failed to select folder after reconnect: %v\n", err)
 			return
 		}
@@ -190,23 +177,22 @@ func manualReconnection() {
 }
 
 func timeoutConfiguration() {
-	fmt.Println("5. Timeout Configuration")
+	fmt.Println("4. Timeout Configuration")
 	fmt.Println("-------------------------")
 
-	// Configure aggressive timeouts for demonstration
-	originalDialTimeout := imap.DialTimeout
-	originalCommandTimeout := imap.CommandTimeout
+	// Use aggressive per-call timeouts for demonstration.
+	opts := imap.Options{
+		Host:           "slow-server.example.com",
+		Port:           993,
+		Auth:           imap.PasswordAuth{Username: "user", Password: "pass"},
+		DialTimeout:    2 * time.Second, // Very short connection timeout
+		CommandTimeout: 5 * time.Second, // Short command timeout
+	}
+	fmt.Printf("Using aggressive timeouts: DialTimeout=%v, CommandTimeout=%v\n",
+		opts.DialTimeout, opts.CommandTimeout)
 
-	imap.DialTimeout = 2 * time.Second    // Very short connection timeout
-	imap.CommandTimeout = 5 * time.Second // Short command timeout
-
-	fmt.Printf("Using aggressive timeouts:\n")
-	fmt.Printf("  DialTimeout: %v\n", imap.DialTimeout)
-	fmt.Printf("  CommandTimeout: %v\n", imap.CommandTimeout)
-
-	// Try to connect with short timeout
 	start := time.Now()
-	m, err := imap.New("user", "pass", "slow-server.example.com", 993)
+	m, err := imap.Dial(context.Background(), opts)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -219,10 +205,9 @@ func timeoutConfiguration() {
 			}
 		}()
 
-		// This search will timeout after CommandTimeout
 		fmt.Println("Attempting a command that might timeout...")
 		start = time.Now()
-		_, err := m.GetUIDs("ALL")
+		_, err := m.GetUIDs(ctx, "ALL")
 		elapsed = time.Since(start)
 
 		if err != nil {
@@ -232,17 +217,12 @@ func timeoutConfiguration() {
 		}
 	}
 
-	// Restore original timeouts
-	imap.DialTimeout = originalDialTimeout
-	imap.CommandTimeout = originalCommandTimeout
-
 	fmt.Println()
 	fmt.Println("=== Best Practices for Error Handling ===")
-	fmt.Println("1. Set appropriate RetryCount based on your needs")
-	fmt.Println("2. Use reasonable timeouts (10-30 seconds typically)")
+	fmt.Println("1. Set a reasonable RetryCount for transient failures")
+	fmt.Println("2. Use sensible timeouts (10-30 seconds typically)")
 	fmt.Println("3. Always check errors from operations")
 	fmt.Println("4. Consider manual reconnection for critical operations")
-	fmt.Println("5. Enable Verbose mode when debugging issues")
+	fmt.Println("5. Enable imap.Verbose when debugging issues")
 	fmt.Println("6. Log errors for monitoring and debugging")
-	fmt.Println("7. Implement exponential backoff for custom retry logic")
 }

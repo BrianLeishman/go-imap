@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+
 func setupTestDialer(t *testing.T) (*Dialer, *mockIMAPServer) {
 	t.Helper()
 
@@ -40,14 +41,14 @@ func TestCreateFolder(t *testing.T) {
 	d, _ := setupTestDialer(t)
 
 	t.Run("success", func(t *testing.T) {
-		err := d.CreateFolder("Archive")
+		err := d.CreateFolder(ctx, "Archive")
 		if err != nil {
 			t.Fatalf("CreateFolder failed: %v", err)
 		}
 	})
 
 	t.Run("special characters in name", func(t *testing.T) {
-		err := d.CreateFolder(`Folder "With" Quotes`)
+		err := d.CreateFolder(ctx, `Folder "With" Quotes`)
 		if err != nil {
 			t.Fatalf("CreateFolder with special chars failed: %v", err)
 		}
@@ -56,7 +57,7 @@ func TestCreateFolder(t *testing.T) {
 	t.Run("does not change current folder", func(t *testing.T) {
 		d.Folder = "INBOX"
 		d.ReadOnly = true
-		err := d.CreateFolder("NewFolder")
+		err := d.CreateFolder(ctx, "NewFolder")
 		if err != nil {
 			t.Fatalf("CreateFolder failed: %v", err)
 		}
@@ -73,7 +74,7 @@ func TestDeleteFolder(t *testing.T) {
 	d, _ := setupTestDialer(t)
 
 	t.Run("success", func(t *testing.T) {
-		err := d.DeleteFolder("Trash")
+		err := d.DeleteFolder(ctx, "Trash")
 		if err != nil {
 			t.Fatalf("DeleteFolder failed: %v", err)
 		}
@@ -83,7 +84,7 @@ func TestDeleteFolder(t *testing.T) {
 		d.Folder = "OldFolder"
 		d.ReadOnly = true
 
-		err := d.DeleteFolder("OldFolder")
+		err := d.DeleteFolder(ctx, "OldFolder")
 		if err != nil {
 			t.Fatalf("DeleteFolder failed: %v", err)
 		}
@@ -99,7 +100,7 @@ func TestDeleteFolder(t *testing.T) {
 		d.Folder = "INBOX"
 		d.ReadOnly = true
 
-		err := d.DeleteFolder("Trash")
+		err := d.DeleteFolder(ctx, "Trash")
 		if err != nil {
 			t.Fatalf("DeleteFolder failed: %v", err)
 		}
@@ -116,7 +117,7 @@ func TestRenameFolder(t *testing.T) {
 	d, _ := setupTestDialer(t)
 
 	t.Run("success", func(t *testing.T) {
-		err := d.RenameFolder("OldName", "NewName")
+		err := d.RenameFolder(ctx, "OldName", "NewName")
 		if err != nil {
 			t.Fatalf("RenameFolder failed: %v", err)
 		}
@@ -126,7 +127,7 @@ func TestRenameFolder(t *testing.T) {
 		d.Folder = "MyFolder"
 		d.ReadOnly = false
 
-		err := d.RenameFolder("MyFolder", "RenamedFolder")
+		err := d.RenameFolder(ctx, "MyFolder", "RenamedFolder")
 		if err != nil {
 			t.Fatalf("RenameFolder failed: %v", err)
 		}
@@ -138,7 +139,7 @@ func TestRenameFolder(t *testing.T) {
 	t.Run("does not update folder state when renaming other folder", func(t *testing.T) {
 		d.Folder = "INBOX"
 
-		err := d.RenameFolder("SomeFolder", "AnotherFolder")
+		err := d.RenameFolder(ctx, "SomeFolder", "AnotherFolder")
 		if err != nil {
 			t.Fatalf("RenameFolder failed: %v", err)
 		}
@@ -148,7 +149,7 @@ func TestRenameFolder(t *testing.T) {
 	})
 
 	t.Run("special characters", func(t *testing.T) {
-		err := d.RenameFolder(`Old "Name"`, `New "Name"`)
+		err := d.RenameFolder(ctx, `Old "Name"`, `New "Name"`)
 		if err != nil {
 			t.Fatalf("RenameFolder with special chars failed: %v", err)
 		}
@@ -162,7 +163,7 @@ func TestCopyEmail(t *testing.T) {
 		d.Folder = "INBOX"
 		d.ReadOnly = false
 
-		err := d.CopyEmail(123, "Archive")
+		err := d.CopyEmail(ctx, 123, "Archive")
 		if err != nil {
 			t.Fatalf("CopyEmail failed: %v", err)
 		}
@@ -172,7 +173,7 @@ func TestCopyEmail(t *testing.T) {
 		d.Folder = "INBOX"
 		d.ReadOnly = false
 
-		err := d.CopyEmail(456, "Sent")
+		err := d.CopyEmail(ctx, 456, "Sent")
 		if err != nil {
 			t.Fatalf("CopyEmail failed: %v", err)
 		}
@@ -185,7 +186,7 @@ func TestCopyEmail(t *testing.T) {
 		d.Folder = "INBOX"
 		d.ReadOnly = true
 
-		err := d.CopyEmail(789, "Archive")
+		err := d.CopyEmail(ctx, 789, "Archive")
 		if err != nil {
 			t.Fatalf("CopyEmail in read-only mode failed: %v", err)
 		}
@@ -200,7 +201,7 @@ func TestCopyEmail(t *testing.T) {
 func TestCreateFolder_Error(t *testing.T) {
 	d, server := setupTestDialer(t)
 	server.failCommands["CREATE"] = true
-	err := d.CreateFolder("BadFolder")
+	err := d.CreateFolder(ctx, "BadFolder")
 	if err == nil {
 		t.Fatal("expected error from CreateFolder")
 	}
@@ -212,7 +213,7 @@ func TestCreateFolder_Error(t *testing.T) {
 func TestDeleteFolder_Error(t *testing.T) {
 	d, server := setupTestDialer(t)
 	server.failCommands["DELETE"] = true
-	err := d.DeleteFolder("BadFolder")
+	err := d.DeleteFolder(ctx, "BadFolder")
 	if err == nil {
 		t.Fatal("expected error from DeleteFolder")
 	}
@@ -224,7 +225,7 @@ func TestDeleteFolder_Error(t *testing.T) {
 func TestRenameFolder_Error(t *testing.T) {
 	d, server := setupTestDialer(t)
 	server.failCommands["RENAME"] = true
-	err := d.RenameFolder("Old", "New")
+	err := d.RenameFolder(ctx, "Old", "New")
 	if err == nil {
 		t.Fatal("expected error from RenameFolder")
 	}
@@ -240,7 +241,7 @@ func TestCopyEmail_Error(t *testing.T) {
 	d.Folder = "INBOX"
 	d.ReadOnly = false
 
-	err := d.CopyEmail(123, "Archive")
+	err := d.CopyEmail(ctx, 123, "Archive")
 	if err == nil {
 		t.Fatal("expected error from CopyEmail when server rejects UID command")
 	}
@@ -255,7 +256,7 @@ func TestAppend(t *testing.T) {
 
 	t.Run("basic append", func(t *testing.T) {
 		msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
-		err := d.Append("INBOX", nil, time.Time{}, msg)
+		err := d.Append(ctx, "INBOX", nil, time.Time{}, msg)
 		if err != nil {
 			t.Fatalf("Append failed: %v", err)
 		}
@@ -263,7 +264,7 @@ func TestAppend(t *testing.T) {
 
 	t.Run("append with flags", func(t *testing.T) {
 		msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Test\r\n\r\nBody")
-		err := d.Append("INBOX", []string{`\Seen`, `\Flagged`}, time.Time{}, msg)
+		err := d.Append(ctx, "INBOX", []string{`\Seen`, `\Flagged`}, time.Time{}, msg)
 		if err != nil {
 			t.Fatalf("Append with flags failed: %v", err)
 		}
@@ -272,14 +273,14 @@ func TestAppend(t *testing.T) {
 	t.Run("append with date", func(t *testing.T) {
 		msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Dated\r\n\r\nOld message")
 		date := time.Date(2024, time.January, 15, 10, 30, 0, 0, time.UTC)
-		err := d.Append("Drafts", []string{`\Draft`}, date, msg)
+		err := d.Append(ctx, "Drafts", []string{`\Draft`}, date, msg)
 		if err != nil {
 			t.Fatalf("Append with date failed: %v", err)
 		}
 	})
 
 	t.Run("append empty message", func(t *testing.T) {
-		err := d.Append("INBOX", nil, time.Time{}, []byte{})
+		err := d.Append(ctx, "INBOX", nil, time.Time{}, []byte{})
 		if err != nil {
 			t.Fatalf("Append empty message failed: %v", err)
 		}
@@ -287,7 +288,7 @@ func TestAppend(t *testing.T) {
 
 	t.Run("append special folder name", func(t *testing.T) {
 		msg := []byte("From: a@b.com\r\nSubject: test\r\n\r\nbody")
-		err := d.Append(`Folder "Special"`, nil, time.Time{}, msg)
+		err := d.Append(ctx, `Folder "Special"`, nil, time.Time{}, msg)
 		if err != nil {
 			t.Fatalf("Append to special folder failed: %v", err)
 		}

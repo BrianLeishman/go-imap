@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -8,13 +9,19 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
+var ctx = context.Background()
+
 func main() {
 	fmt.Println("=== RFC 3501 Section 7.5 Literal Search Example ===")
 	fmt.Println("This example demonstrates searching with non-ASCII characters using literal syntax")
 	fmt.Println()
 
 	// Connect to server
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -25,7 +32,7 @@ func main() {
 	}()
 
 	// Select folder first
-	err = m.SelectFolder("INBOX")
+	err = m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
@@ -81,7 +88,7 @@ func main() {
 		fmt.Printf("   Actual bytes: %d\n", len([]byte(search.query[strings.LastIndex(search.query, "\n")+1:])))
 
 		// Perform the search
-		uids, err := m.GetUIDs(search.query)
+		uids, err := m.GetUIDs(ctx, search.query)
 		if err != nil {
 			fmt.Printf("   ❌ Search failed: %v\n", err)
 		} else if len(uids) == 0 {
@@ -105,7 +112,7 @@ func main() {
 
 	for _, search := range asciiSearches {
 		fmt.Printf("Query: %s\n", search)
-		uids, err := m.GetUIDs(search)
+		uids, err := m.GetUIDs(ctx, search)
 		if err != nil {
 			fmt.Printf("❌ Search failed: %v\n", err)
 		} else {

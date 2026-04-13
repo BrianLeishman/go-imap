@@ -1,12 +1,14 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 )
+
 
 // MockDialer for testing EXAMINE/SELECT redundancy
 type MockDialer struct {
@@ -59,7 +61,7 @@ func (m *MockDialer) Exec(command string, expectOK bool, retryCount int, handler
 	return "", fmt.Errorf("mock error: no response configured for command: %s", command)
 }
 
-func (m *MockDialer) ExamineFolder(folder string) error {
+func (m *MockDialer) ExamineFolder(_ context.Context, folder string) error {
 	_, err := m.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return err
@@ -121,7 +123,7 @@ func TestExamineSelectRedundancy(t *testing.T) {
 			// This demonstrates why library methods use selectAndGetCount instead
 			for _, folder := range tt.folders {
 				// Anti-pattern: First calls ExamineFolder (gets folder info read-only)
-				err := mock.ExamineFolder(folder)
+				err := mock.ExamineFolder(ctx, folder)
 				if err != nil {
 					t.Errorf("ExamineFolder() error = %v", err)
 					continue

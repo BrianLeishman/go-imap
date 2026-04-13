@@ -37,28 +37,30 @@ Requires Go 1.25+ (see `go.mod`).
 package main
 
 import (
+    "context"
     "fmt"
     "time"
     imap "github.com/BrianLeishman/go-imap"
 )
 
 func main() {
-    // Optional configuration
-    imap.Verbose = false      // Enable to emit debug-level IMAP logs
-    imap.RetryCount = 3        // Number of retries for failed commands
-    imap.DialTimeout = 10 * time.Second
-    imap.CommandTimeout = 30 * time.Second
+    imap.Verbose = false // Enable to emit debug-level IMAP logs
 
     // For self-signed certificates (use with caution!)
     // imap.TLSSkipVerify = true
 
-    // Connect with standard LOGIN authentication
-    m, err := imap.New("username", "password", "mail.server.com", 993)
+    c, err := imap.Dial(context.Background(), imap.Options{
+        Host:           "mail.server.com",
+        Port:           993,
+        Auth:           imap.PasswordAuth{Username: "username", Password: "password"},
+        DialTimeout:    10 * time.Second,
+        CommandTimeout: 30 * time.Second,
+        RetryCount:     3,
+    })
     if err != nil { panic(err) }
-    defer m.Close()
+    defer c.Close()
 
-    // Quick test
-    folders, err := m.GetFolders()
+    folders, err := c.GetFolders()
     if err != nil { panic(err) }
     fmt.Printf("Connected! Found %d folders\n", len(folders))
 }
@@ -67,13 +69,16 @@ func main() {
 ### OAuth 2.0 Authentication (XOAUTH2)
 
 ```go
-// Connect with OAuth2 (Gmail, Office 365, etc.)
-m, err := imap.NewWithOAuth2("user@example.com", accessToken, "imap.gmail.com", 993)
+c, err := imap.Dial(context.Background(), imap.Options{
+    Host: "imap.gmail.com",
+    Port: 993,
+    Auth: imap.XOAuth2{Username: "user@example.com", AccessToken: accessToken},
+})
 if err != nil { panic(err) }
-defer m.Close()
+defer c.Close()
 
-// The OAuth2 connection works exactly like LOGIN after authentication
-if err := m.SelectFolder("INBOX"); err != nil { panic(err) }
+// The OAuth2 connection works exactly like LOGIN after authentication.
+if err := c.SelectFolder("INBOX"); err != nil { panic(err) }
 ```
 
 ## Logging
@@ -137,11 +142,15 @@ go run examples/basic_connection/main.go
 
 ## Detailed Usage Examples
 
+All operations take a `context.Context` as the first argument so you can apply
+deadlines or cancellation; the examples below assume
+`ctx := context.Background()` unless stated otherwise.
+
 ### 1. Working with Folders
 
 ```go
 // List all folders
-folders, err := m.GetFolders()
+folders, err := m.GetFolders(ctx)
 if err != nil { panic(err) }
 
 // Example output:
@@ -161,27 +170,27 @@ for _, folder := range folders {
 }
 
 // Select a folder for operations (read-write mode)
-err = m.SelectFolder("INBOX")
+err = m.SelectFolder(ctx, "INBOX")
 if err != nil { panic(err) }
 
 // Select folder in read-only mode
-err = m.ExamineFolder("INBOX")
+err = m.ExamineFolder(ctx, "INBOX")
 if err != nil { panic(err) }
 
 // Get total email count across all folders
-totalCount, err := m.GetTotalEmailCount()
+totalCount, err := m.GetTotalEmailCount(ctx)
 if err != nil { panic(err) }
 fmt.Printf("Total emails in all folders: %d\n", totalCount)
 
 // Get count excluding certain folders
 excludedFolders := []string{"Trash", "[Gmail]/Spam"}
-count, err := m.GetTotalEmailCountExcluding(excludedFolders)
+count, err := m.GetTotalEmailCountExcluding(ctx, excludedFolders)
 if err != nil { panic(err) }
 fmt.Printf("Total emails (excluding spam/trash): %d\n", count)
 
 // Error-tolerant counting (continues even if some folders fail)
 // This is especially useful with Gmail or other providers that have inaccessible system folders
-safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
+safeCount, folderErrors, err := m.GetTotalEmailCountSafe(ctx)
 if err != nil { panic(err) }
 fmt.Printf("Total accessible emails: %d\n", safeCount)
 
@@ -198,17 +207,17 @@ if len(folderErrors) > 0 {
 //   - folder "[Gmail]/All Mail": NO [NONEXISTENT] Unknown Mailbox
 
 // Create, rename, and delete folders
-err = m.CreateFolder("INBOX/Projects")
+err = m.CreateFolder(ctx, "INBOX/Projects")
 if err != nil { panic(err) }
 
-err = m.RenameFolder("INBOX/Projects", "INBOX/Archive")
+err = m.RenameFolder(ctx, "INBOX/Projects", "INBOX/Archive")
 if err != nil { panic(err) }
 
-err = m.DeleteFolder("INBOX/Archive")
+err = m.DeleteFolder(ctx, "INBOX/Archive")
 if err != nil { panic(err) }
 
 // Get detailed statistics for each folder (includes max UID)
-stats, err := m.GetFolderStats()
+stats, err := m.GetFolderStats(ctx)
 if err != nil { panic(err) }
 
 fmt.Printf("Found %d folders:\n", len(stats))
@@ -245,7 +254,7 @@ Some IMAP servers (especially Gmail) have special system folders that cannot be 
 
 ```go
 // Traditional approach - fails if ANY folder has issues
-totalCount, err := m.GetTotalEmailCount()
+totalCount, err := m.GetTotalEmailCount(ctx)
 if err != nil {
     // This will fail completely if "[Gmail]" folder is inaccessible
     fmt.Printf("Count failed: %v\n", err)
@@ -253,7 +262,7 @@ if err != nil {
 }
 
 // Safe approach - continues despite folder errors
-safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
+safeCount, folderErrors, err := m.GetTotalEmailCountSafe(ctx)
 if err != nil {
     // Only fails on serious connection issues, not individual folder problems
     panic(err)
@@ -266,13 +275,13 @@ if len(folderErrors) > 0 {
 
 // Safe exclusion - combine error tolerance with folder filtering
 excludedFolders := []string{"Trash", "Junk", "Deleted Items"}
-count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(excludedFolders)
+count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(ctx, excludedFolders)
 if err != nil { panic(err) }
 
 fmt.Printf("Active emails: %d (excluding trash/spam and skipping errors)\n", count)
 
 // Detailed analysis with error handling
-stats, err := m.GetFolderStats()
+stats, err := m.GetFolderStats(ctx)
 if err != nil { panic(err) }
 
 accessibleFolders := 0
@@ -302,7 +311,7 @@ fmt.Printf("\nSummary: %d/%d folders accessible, %d total emails, highest UID: %
 #### Error Types You Might Encounter
 
 ```go
-stats, err := m.GetFolderStats()
+stats, err := m.GetFolderStats(ctx)
 if err != nil { panic(err) }
 
 for _, stat := range stats {
@@ -325,15 +334,15 @@ for _, stat := range stats {
 
 ```go
 // Select folder first
-err := m.SelectFolder("INBOX")
+err := m.SelectFolder(ctx, "INBOX")
 if err != nil { panic(err) }
 
 // Basic searches - returns slice of UIDs
-allUIDs, _ := m.GetUIDs("ALL")           // All emails
-unseenUIDs, _ := m.GetUIDs("UNSEEN")     // Unread emails
-recentUIDs, _ := m.GetUIDs("RECENT")     // Recent emails
-seenUIDs, _ := m.GetUIDs("SEEN")         // Read emails
-flaggedUIDs, _ := m.GetUIDs("FLAGGED")   // Starred/flagged emails
+allUIDs, _ := m.GetUIDs(ctx, "ALL")           // All emails
+unseenUIDs, _ := m.GetUIDs(ctx, "UNSEEN")     // Unread emails
+recentUIDs, _ := m.GetUIDs(ctx, "RECENT")     // Recent emails
+seenUIDs, _ := m.GetUIDs(ctx, "SEEN")         // Read emails
+flaggedUIDs, _ := m.GetUIDs(ctx, "FLAGGED")   // Starred/flagged emails
 
 // Example output:
 fmt.Printf("Found %d total emails\n", len(allUIDs))      // Found 342 total emails
@@ -341,57 +350,57 @@ fmt.Printf("Found %d unread emails\n", len(unseenUIDs))  // Found 12 unread emai
 fmt.Printf("UIDs of unread: %v\n", unseenUIDs)           // UIDs of unread: [245 246 247 251 252 253 254 255 256 257 258 259]
 
 // Date-based searches
-todayUIDs, _ := m.GetUIDs("ON 15-Sep-2024")
-sinceUIDs, _ := m.GetUIDs("SINCE 10-Sep-2024")
-beforeUIDs, _ := m.GetUIDs("BEFORE 20-Sep-2024")
-rangeUIDs, _ := m.GetUIDs("SINCE 1-Sep-2024 BEFORE 30-Sep-2024")
+todayUIDs, _ := m.GetUIDs(ctx, "ON 15-Sep-2024")
+sinceUIDs, _ := m.GetUIDs(ctx, "SINCE 10-Sep-2024")
+beforeUIDs, _ := m.GetUIDs(ctx, "BEFORE 20-Sep-2024")
+rangeUIDs, _ := m.GetUIDs(ctx, "SINCE 1-Sep-2024 BEFORE 30-Sep-2024")
 
 // From/To searches
-fromBossUIDs, _ := m.GetUIDs(`FROM "boss@company.com"`)
-toMeUIDs, _ := m.GetUIDs(`TO "me@company.com"`)
+fromBossUIDs, _ := m.GetUIDs(ctx, `FROM "boss@company.com"`)
+toMeUIDs, _ := m.GetUIDs(ctx, `TO "me@company.com"`)
 
 // Subject/body searches
-subjectUIDs, _ := m.GetUIDs(`SUBJECT "invoice"`)
-bodyUIDs, _ := m.GetUIDs(`BODY "payment"`)
-textUIDs, _ := m.GetUIDs(`TEXT "urgent"`) // Searches both subject and body
+subjectUIDs, _ := m.GetUIDs(ctx, `SUBJECT "invoice"`)
+bodyUIDs, _ := m.GetUIDs(ctx, `BODY "payment"`)
+textUIDs, _ := m.GetUIDs(ctx, `TEXT "urgent"`) // Searches both subject and body
 
 // Complex searches
-complexUIDs, _ := m.GetUIDs(`UNSEEN FROM "support@github.com" SINCE 1-Sep-2024`)
+complexUIDs, _ := m.GetUIDs(ctx, `UNSEEN FROM "support@github.com" SINCE 1-Sep-2024`)
 
 // UID ranges (raw IMAP syntax)
-firstUID, _ := m.GetUIDs("1")          // UID 1 only
-lastUID, _ := m.GetUIDs("*")           // Highest UID only
-rangeUIDs, _ := m.GetUIDs("1:10")      // UIDs 1 through 10
+firstUID, _ := m.GetUIDs(ctx, "1")          // UID 1 only
+lastUID, _ := m.GetUIDs(ctx, "*")           // Highest UID only
+rangeUIDs, _ := m.GetUIDs(ctx, "1:10")      // UIDs 1 through 10
 
 // Get the N most recent messages (recommended for "last N" queries)
-last10UIDs, _ := m.GetLastNUIDs(10)    // Last 10 messages by UID
+last10UIDs, _ := m.GetLastNUIDs(ctx, 10)    // Last 10 messages by UID
 
 // Cheaper method to retrieve the latest UID (requires RFC-4731;
 // not all servers support this — check the error).
-maxUID, _ := m.GetMaxUID()             // Highest UID only
+maxUID, _ := m.GetMaxUID(ctx)             // Highest UID only
 
 // Size-based searches
-largeUIDs, _ := m.GetUIDs("LARGER 10485760")  // Emails larger than 10MB
-smallUIDs, _ := m.GetUIDs("SMALLER 1024")     // Emails smaller than 1KB
+largeUIDs, _ := m.GetUIDs(ctx, "LARGER 10485760")  // Emails larger than 10MB
+smallUIDs, _ := m.GetUIDs(ctx, "SMALLER 1024")     // Emails smaller than 1KB
 
 // Non-ASCII searches using RFC 3501 literal syntax
 // The library automatically detects and handles literal syntax {n}
 // where n is the byte count of the following data
 
 // Search for Cyrillic text in subject (тест = 8 bytes in UTF-8)
-cyrillicUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {8}\r\nтест")
+cyrillicUIDs, _ := m.GetUIDs(ctx, "CHARSET UTF-8 Subject {8}\r\nтест")
 
 // Search for Chinese text in subject (测试 = 6 bytes in UTF-8)  
-chineseUIDs, _ := m.GetUIDs("CHARSET UTF-8 Subject {6}\r\n测试")
+chineseUIDs, _ := m.GetUIDs(ctx, "CHARSET UTF-8 Subject {6}\r\n测试")
 
 // Search for Japanese text in body (テスト = 9 bytes in UTF-8)
-japaneseUIDs, _ := m.GetUIDs("CHARSET UTF-8 BODY {9}\r\nテスト")
+japaneseUIDs, _ := m.GetUIDs(ctx, "CHARSET UTF-8 BODY {9}\r\nテスト")
 
 // Search for Arabic text (اختبار = 12 bytes in UTF-8)
-arabicUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {12}\r\nاختبار")
+arabicUIDs, _ := m.GetUIDs(ctx, "CHARSET UTF-8 TEXT {12}\r\nاختبار")
 
 // Search with emoji (😀👍 = 8 bytes in UTF-8)
-emojiUIDs, _ := m.GetUIDs("CHARSET UTF-8 TEXT {8}\r\n😀👍")
+emojiUIDs, _ := m.GetUIDs(ctx, "CHARSET UTF-8 TEXT {8}\r\n😀👍")
 
 // Note: Always specify CHARSET UTF-8 for non-ASCII searches
 // The {n} syntax tells the server exactly how many bytes to expect
@@ -404,10 +413,10 @@ For complex or repeated queries, use the fluent `SearchBuilder` instead of raw s
 
 ```go
 // Simple search
-uids, _ := m.SearchUIDs(imap.Search().Unseen())
+uids, _ := m.SearchUIDs(ctx, imap.Search().Unseen())
 
 // Combine multiple criteria (AND)
-uids, _ = m.SearchUIDs(
+uids, _ = m.SearchUIDs(ctx, 
     imap.Search().
         From("boss@company.com").
         Since(time.Now().AddDate(0, 0, -7)).
@@ -416,38 +425,38 @@ uids, _ = m.SearchUIDs(
 
 // Date range
 lastMonth := time.Now().AddDate(0, -1, 0)
-uids, _ = m.SearchUIDs(
+uids, _ = m.SearchUIDs(ctx, 
     imap.Search().Since(lastMonth).Before(time.Now()).Flagged(),
 )
 
 // OR and NOT operators
-uids, _ = m.SearchUIDs(
+uids, _ = m.SearchUIDs(ctx, 
     imap.Search().Or(
         imap.Search().From("alice@example.com"),
         imap.Search().From("bob@example.com"),
     ).Unseen(),
 )
 
-uids, _ = m.SearchUIDs(
+uids, _ = m.SearchUIDs(ctx, 
     imap.Search().Not(imap.Search().From("noreply@")).Unseen(),
 )
 
 // Size filters
-uids, _ = m.SearchUIDs(imap.Search().Larger(10 * 1024 * 1024)) // > 10MB
+uids, _ = m.SearchUIDs(ctx, imap.Search().Larger(10 * 1024 * 1024)) // > 10MB
 
 // Non-ASCII text is handled automatically (CHARSET UTF-8 + literal syntax)
-uids, _ = m.SearchUIDs(imap.Search().Subject("日報"))
+uids, _ = m.SearchUIDs(ctx, imap.Search().Subject("日報"))
 
 // You can also use Build() to get the raw string for GetUIDs()
 query := imap.Search().From("alice").Unseen().Since(lastMonth).Build()
-uids, _ = m.GetUIDs(query)
+uids, _ = m.GetUIDs(ctx, query)
 ```
 
 ### 3. Fetching Email Details
 
 ```go
 // Get overview (headers only, no body) - FAST
-overviews, err := m.GetOverviews(uids...)
+overviews, err := m.GetOverviews(ctx, uids...)
 if err != nil { panic(err) }
 
 for uid, email := range overviews {
@@ -468,7 +477,7 @@ for uid, email := range overviews {
 //   Flags: [\Seen]
 
 // Get full emails with bodies - SLOWER
-emails, err := m.GetEmails(uids...)
+emails, err := m.GetEmails(ctx, uids...)
 if err != nil { panic(err) }
 
 for uid, email := range emails {
@@ -535,24 +544,24 @@ fmt.Print(email)
 ```go
 // === Moving and Copying Emails ===
 uid := 245
-err = m.MoveEmail(uid, "INBOX/Archive")
+err = m.MoveEmail(ctx, uid, "INBOX/Archive")
 if err != nil { panic(err) }
 fmt.Printf("Moved email %d to Archive\n", uid)
 
 // Copy keeps the original in the current folder
-err = m.CopyEmail(uid, "INBOX/Backup")
+err = m.CopyEmail(ctx, uid, "INBOX/Backup")
 if err != nil { panic(err) }
 fmt.Printf("Copied email %d to Backup\n", uid)
 
 // === Uploading Messages (APPEND) ===
 msg := []byte("From: me@example.com\r\nTo: you@example.com\r\nSubject: Hello\r\n\r\nMessage body")
-err = m.Append("Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
+err = m.Append(ctx, "Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
 if err != nil { panic(err) }
 fmt.Println("Uploaded draft message")
 
 // === Setting Flags ===
 // Mark as read
-err = m.MarkSeen(uid)
+err = m.MarkSeen(ctx, uid)
 if err != nil { panic(err) }
 
 // Set multiple flags at once
@@ -561,7 +570,7 @@ flags := imap.Flags{
     Flagged:  imap.FlagAdd,      // Star/flag the email
     Answered: imap.FlagRemove,   // Remove answered flag
 }
-err = m.SetFlags(uid, flags)
+err = m.SetFlags(ctx, uid, flags)
 if err != nil { panic(err) }
 
 // Custom keywords (if server supports)
@@ -572,17 +581,17 @@ flags = imap.Flags{
         "$Pending":   false,     // Remove this keyword
     },
 }
-err = m.SetFlags(uid, flags)
+err = m.SetFlags(ctx, uid, flags)
 if err != nil { panic(err) }
 
 // === Deleting Emails ===
 // Step 1: Mark as deleted (sets \Deleted flag)
-err = m.DeleteEmail(uid)
+err = m.DeleteEmail(ctx, uid)
 if err != nil { panic(err) }
 fmt.Printf("Marked email %d for deletion\n", uid)
 
 // Step 2: Expunge to permanently remove all \Deleted emails
-err = m.Expunge()
+err = m.Expunge(ctx)
 if err != nil { panic(err) }
 fmt.Println("Permanently deleted all marked emails")
 
@@ -604,8 +613,8 @@ handler := &imap.IdleHandler{
         // Example output: [EXISTS] New message at index: 343
 
         // You might want to fetch the new email:
-        // uids, _ := m.GetUIDs(fmt.Sprintf("%d", e.MessageIndex))
-        // emails, _ := m.GetEmails(uids...)
+        // uids, _ := m.GetUIDs(ctx, fmt.Sprintf("%d", e.MessageIndex))
+        // emails, _ := m.GetEmails(ctx, uids...)
     },
 
     // Email was deleted/expunged
@@ -623,7 +632,7 @@ handler := &imap.IdleHandler{
 }
 
 // Start IDLE (non-blocking, runs in background)
-err := m.StartIdle(handler)
+err := m.StartIdle(ctx, handler)
 if err != nil { panic(err) }
 
 // Your application continues running...
@@ -636,7 +645,7 @@ if err != nil { panic(err) }
 // Full example with proper lifecycle:
 func monitorInbox(m *imap.Dialer) {
     // Select the folder to monitor
-    if err := m.SelectFolder("INBOX"); err != nil {
+    if err := m.SelectFolder(ctx, "INBOX"); err != nil {
         panic(err)
     }
 
@@ -653,7 +662,7 @@ func monitorInbox(m *imap.Dialer) {
     }
 
     fmt.Println("Starting IDLE monitoring...")
-    if err := m.StartIdle(handler); err != nil {
+    if err := m.StartIdle(ctx, handler); err != nil {
         panic(err)
     }
 
@@ -678,21 +687,21 @@ func robustEmailFetch(m *imap.Dialer) {
     imap.RetryCount = 5  // Will retry failed operations 5 times
     imap.Verbose = true  // Emit debug logs while retrying commands
 
-    err := m.SelectFolder("INBOX")
+    err := m.SelectFolder(ctx, "INBOX")
     if err != nil {
         // Connection errors are automatically retried
         // This only fails after all retries are exhausted
         fmt.Printf("Failed to select folder after %d retries: %v\n", imap.RetryCount, err)
 
         // You might want to manually reconnect
-        if err := m.Reconnect(); err != nil {
+        if err := m.Reconnect(ctx); err != nil {
             fmt.Printf("Manual reconnection failed: %v\n", err)
             return
         }
     }
 
     // Fetch emails with automatic retry on network issues
-    uids, err := m.GetUIDs("UNSEEN")
+    uids, err := m.GetUIDs(ctx, "UNSEEN")
     if err != nil {
         fmt.Printf("Search failed: %v\n", err)
         return
@@ -705,7 +714,7 @@ func robustEmailFetch(m *imap.Dialer) {
     // 4. Re-select the previously selected folder
     // 5. Retry the failed command
 
-    emails, err := m.GetEmails(uids...)
+    emails, err := m.GetEmails(ctx, uids...)
     if err != nil {
         fmt.Printf("Fetch failed after retries: %v\n", err)
         return
@@ -731,7 +740,7 @@ func configureTimeouts() {
     defer m.Close()
 
     // This search will timeout after 30 seconds
-    uids, err := m.GetUIDs("ALL")
+    uids, err := m.GetUIDs(ctx, "ALL")
     if err != nil {
         fmt.Printf("Command timed out or failed: %v\n", err)
     }
@@ -768,7 +777,7 @@ func main() {
 
     // List folders
     fmt.Println("\n📁 Available folders:")
-    folders, err := m.GetFolders()
+    folders, err := m.GetFolders(ctx)
     if err != nil {
         log.Fatalf("Failed to get folders: %v", err)
     }
@@ -778,13 +787,13 @@ func main() {
 
     // Select INBOX
     fmt.Println("\n📥 Selecting INBOX...")
-    if err := m.SelectFolder("INBOX"); err != nil {
+    if err := m.SelectFolder(ctx, "INBOX"); err != nil {
         log.Fatalf("Failed to select INBOX: %v", err)
     }
 
     // Get unread emails
     fmt.Println("\n🔍 Searching for unread emails...")
-    unreadUIDs, err := m.GetUIDs("UNSEEN")
+    unreadUIDs, err := m.GetUIDs(ctx, "UNSEEN")
     if err != nil {
         log.Fatalf("Search failed: %v", err)
     }
@@ -798,7 +807,7 @@ func main() {
 
     if limit > 0 {
         fmt.Printf("\n📧 Fetching first %d unread emails...\n", limit)
-        emails, err := m.GetEmails(unreadUIDs[:limit]...)
+        emails, err := m.GetEmails(ctx, unreadUIDs[:limit]...)
         if err != nil {
             log.Fatalf("Failed to fetch emails: %v", err)
         }
@@ -826,7 +835,7 @@ func main() {
             // Mark first email as read
             if uid == unreadUIDs[0] {
                 fmt.Printf("\n✓ Marking email %d as read...\n", uid)
-                if err := m.MarkSeen(uid); err != nil {
+                if err := m.MarkSeen(ctx, uid); err != nil {
                     fmt.Printf("Failed to mark as read: %v\n", err)
                 }
             }
@@ -835,9 +844,9 @@ func main() {
 
     // Get some statistics
     fmt.Println("\n📊 Mailbox Statistics:")
-    allUIDs, _ := m.GetUIDs("ALL")
-    seenUIDs, _ := m.GetUIDs("SEEN")
-    flaggedUIDs, _ := m.GetUIDs("FLAGGED")
+    allUIDs, _ := m.GetUIDs(ctx, "ALL")
+    seenUIDs, _ := m.GetUIDs(ctx, "SEEN")
+    flaggedUIDs, _ := m.GetUIDs(ctx, "FLAGGED")
 
     fmt.Printf("  Total emails: %d\n", len(allUIDs))
     fmt.Printf("  Read emails: %d\n", len(seenUIDs))
@@ -852,7 +861,7 @@ func main() {
         },
     }
 
-    if err := m.StartIdle(handler); err == nil {
+    if err := m.StartIdle(ctx, handler); err == nil {
         time.Sleep(10 * time.Second)
         _ = m.StopIdle()
     }

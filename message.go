@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
@@ -150,8 +151,8 @@ func (a Attachment) String() string {
 //   - "SINCE 1-Jan-2024" - messages since a date
 //
 // Note: For retrieving the N most recent messages, use GetLastNUIDs instead.
-func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
-	r, err := d.Exec(`UID SEARCH `+search, true, RetryCount, nil)
+func (d *Client) GetUIDs(ctx context.Context, search string) (uids []int, err error) {
+	r, err := d.Exec(ctx, `UID SEARCH `+search, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +170,11 @@ func (d *Dialer) GetUIDs(search string) (uids []int, err error) {
 //
 //	// Get the 10 most recent messages
 //	uids, err := conn.GetLastNUIDs(10)
-func (d *Dialer) GetLastNUIDs(n int) ([]int, error) {
+func (d *Client) GetLastNUIDs(ctx context.Context, n int) ([]int, error) {
 	if n <= 0 {
 		return nil, nil
 	}
-	allUIDs, err := d.GetUIDs("ALL")
+	allUIDs, err := d.GetUIDs(ctx, "ALL")
 	if err != nil {
 		return nil, err
 	}
@@ -187,24 +188,24 @@ func (d *Dialer) GetLastNUIDs(n int) ([]int, error) {
 //
 // The folder of interest must be already selected in either read-only mode,
 // ExamineFolder, or in read-write mode, SelectFolder.
-func (d *Dialer) GetMaxUID() (uid int, err error) {
-	r, err := d.Exec("UID SEARCH RETURN (MAX) 1:*", true, RetryCount, nil)
+func (d *Client) GetMaxUID(ctx context.Context) (uid int, err error) {
+	r, err := d.Exec(ctx, "UID SEARCH RETURN (MAX) 1:*", true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return 0, err
 	}
 	return parseMaxUIDSearchResponse(r)
 }
 
-// MoveEmail moves an email to a different folder
-func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
+// MoveEmail moves an email to a different folder.
+func (d *Client) MoveEmail(ctx context.Context, uid int, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		_ = d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(ctx, d.Folder)
 	}
-	_, err = d.Exec(`UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	_, err = d.Exec(ctx, `UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		_ = d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(ctx, d.Folder)
 	}
 	if err != nil {
 		return err
@@ -216,55 +217,55 @@ func (d *Dialer) MoveEmail(uid int, folder string) (err error) {
 // CopyEmail copies an email to a different folder.
 // Unlike MoveEmail, the original message remains in the current folder.
 // UID COPY is not retried because duplicating a message is not idempotent.
-func (d *Dialer) CopyEmail(uid int, folder string) error {
+func (d *Client) CopyEmail(ctx context.Context, uid int, folder string) error {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		if err := d.SelectFolder(d.Folder); err != nil {
+		if err := d.SelectFolder(ctx, d.Folder); err != nil {
 			return err
 		}
 	}
-	_, err := d.Exec(`UID COPY `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
+	_, err := d.Exec(ctx, `UID COPY `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
 	if readOnlyState {
-		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
 			err = e
 		}
 	}
 	return err
 }
 
-// MarkSeen marks an email as seen/read
-func (d *Dialer) MarkSeen(uid int) (err error) {
+// MarkSeen marks an email as seen/read.
+func (d *Client) MarkSeen(ctx context.Context, uid int) (err error) {
 	flags := Flags{
 		Seen: FlagAdd,
 	}
 
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		_ = d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(ctx, d.Folder)
 	}
-	err = d.SetFlags(uid, flags)
+	err = d.SetFlags(ctx, uid, flags)
 	if readOnlyState {
-		_ = d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(ctx, d.Folder)
 	}
 
 	return err
 }
 
-// DeleteEmail marks an email for deletion
-func (d *Dialer) DeleteEmail(uid int) (err error) {
+// DeleteEmail marks an email for deletion.
+func (d *Client) DeleteEmail(ctx context.Context, uid int) (err error) {
 	flags := Flags{
 		Deleted: FlagAdd,
 	}
 
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		if err = d.SelectFolder(d.Folder); err != nil {
+		if err = d.SelectFolder(ctx, d.Folder); err != nil {
 			return err
 		}
 	}
-	err = d.SetFlags(uid, flags)
+	err = d.SetFlags(ctx, uid, flags)
 	if readOnlyState {
-		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
 			err = e
 		}
 	}
@@ -272,25 +273,25 @@ func (d *Dialer) DeleteEmail(uid int) (err error) {
 	return err
 }
 
-// Expunge permanently removes emails marked for deletion
-func (d *Dialer) Expunge() (err error) {
+// Expunge permanently removes emails marked for deletion.
+func (d *Client) Expunge(ctx context.Context) (err error) {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		if err = d.SelectFolder(d.Folder); err != nil {
+		if err = d.SelectFolder(ctx, d.Folder); err != nil {
 			return err
 		}
 	}
-	_, err = d.Exec("EXPUNGE", false, RetryCount, nil)
+	_, err = d.Exec(ctx, "EXPUNGE", false, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		if e := d.ExamineFolder(d.Folder); e != nil && err == nil {
+		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
 			err = e
 		}
 	}
 	return err
 }
 
-// SetFlags sets message flags (seen, deleted, etc.)
-func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
+// SetFlags sets message flags (seen, deleted, etc.).
+func (d *Client) SetFlags(ctx context.Context, uid int, flags Flags) (err error) {
 	// craft the flags-string
 	addFlags := []string{}
 	removeFlags := []string{}
@@ -332,11 +333,11 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
-		_ = d.SelectFolder(d.Folder)
+		_ = d.SelectFolder(ctx, d.Folder)
 	}
-	_, err = d.Exec(query, true, RetryCount, nil)
+	_, err = d.Exec(ctx, query, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
-		_ = d.ExamineFolder(d.Folder)
+		_ = d.ExamineFolder(ctx, d.Folder)
 	}
 
 	return err
@@ -344,7 +345,7 @@ func (d *Dialer) SetFlags(uid int, flags Flags) (err error) {
 
 // parseEmailBody parses an RFC 2822 message body string and populates the Email fields.
 // Returns true if parsing succeeded.
-func (d *Dialer) parseEmailBody(e *Email, bodyStr string) bool {
+func (d *Client) parseEmailBody(e *Email, bodyStr string) bool {
 	r := strings.NewReader(bodyStr)
 	env, err := enmime.ReadEnvelope(r)
 	if err != nil {
@@ -404,7 +405,7 @@ func unwrapTokens(tks []*Token) []*Token {
 
 // parseEmailRecord processes a single FETCH record for GetEmails, returning the
 // parsed email, whether parsing succeeded, and any error.
-func (d *Dialer) parseEmailRecord(tks []*Token) (*Email, bool, error) {
+func (d *Client) parseEmailRecord(tks []*Token) (*Email, bool, error) {
 	tks = unwrapTokens(tks)
 	e := &Email{}
 	skip := 0
@@ -437,9 +438,9 @@ func (d *Dialer) parseEmailRecord(tks []*Token) (*Email, bool, error) {
 	return e, success, nil
 }
 
-// GetEmails retrieves full email messages including body content
-func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
-	emails, err = d.GetOverviews(uids...)
+// GetEmails retrieves full email messages including body content.
+func (d *Client) GetEmails(ctx context.Context, uids ...int) (emails map[int]*Email, err error) {
+	emails, err = d.GetOverviews(ctx, uids...)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +469,7 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
-		r, err := d.Exec("UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, 0, nil)
+		r, err := d.Exec(ctx, "UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, 0, nil)
 		if err != nil {
 			return err
 		}
@@ -501,19 +502,19 @@ func (d *Dialer) GetEmails(uids ...int) (emails map[int]*Email, err error) {
 			}
 		}
 		return err
-	}, RetryCount, func(err error) error {
+	}, d.effectiveRetryCount(), func(err error) error {
 		errorLog(d.ConnNum, d.Folder, "fetch failed", "error", err)
 		_ = d.Close()
 		return nil
 	}, func() error {
-		return d.Reconnect()
+		return d.Reconnect(ctx)
 	})
 
 	return emails, err
 }
 
 // parseEnvelope extracts envelope data (date, subject, addresses, message-id) from an ENVELOPE token.
-func (d *Dialer) parseEnvelope(e *Email, envelopeToken *Token, tks []*Token) error {
+func (d *Client) parseEnvelope(e *Email, envelopeToken *Token, tks []*Token) error {
 	charsetReader := func(label string, input io.Reader) (io.Reader, error) {
 		label = strings.ReplaceAll(label, "windows-", "cp")
 		encoding, _ := charset.Lookup(label)
@@ -561,7 +562,7 @@ func (d *Dialer) parseEnvelope(e *Email, envelopeToken *Token, tks []*Token) err
 }
 
 // parseEnvelopeAddresses parses a single address-list field from an ENVELOPE token.
-func (d *Dialer) parseEnvelopeAddresses(dest *EmailAddresses, addrToken *Token, dec *mime.WordDecoder, tks []*Token, debug string) error {
+func (d *Client) parseEnvelopeAddresses(dest *EmailAddresses, addrToken *Token, dec *mime.WordDecoder, tks []*Token, debug string) error {
 	if addrToken.Type == TNil {
 		return nil
 	}
@@ -599,7 +600,7 @@ func (d *Dialer) parseEnvelopeAddresses(dest *EmailAddresses, addrToken *Token, 
 
 // parseOverviewField processes a single field (FLAGS, INTERNALDATE, RFC822.SIZE, ENVELOPE, UID)
 // in an overview record at position i, returning the number of extra tokens to skip.
-func (d *Dialer) parseOverviewField(e *Email, tks []*Token, i int, fieldName string) (skip int, err error) {
+func (d *Client) parseOverviewField(e *Email, tks []*Token, i int, fieldName string) (skip int, err error) {
 	switch fieldName {
 	case "FLAGS":
 		if err = d.CheckType(tks[i+1], []TType{TContainer}, tks, "after FLAGS"); err != nil {
@@ -645,7 +646,7 @@ func (d *Dialer) parseOverviewField(e *Email, tks []*Token, i int, fieldName str
 }
 
 // parseOverviewRecord processes a single FETCH record's tokens into an Email.
-func (d *Dialer) parseOverviewRecord(tks []*Token) (*Email, error) {
+func (d *Client) parseOverviewRecord(tks []*Token) (*Email, error) {
 	tks = unwrapTokens(tks)
 	e := &Email{}
 	skip := 0
@@ -666,8 +667,8 @@ func (d *Dialer) parseOverviewRecord(tks []*Token) (*Email, error) {
 	return e, nil
 }
 
-// GetOverviews retrieves email overview information (headers, flags, etc.)
-func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
+// GetOverviews retrieves email overview information (headers, flags, etc.).
+func (d *Client) GetOverviews(ctx context.Context, uids ...int) (emails map[int]*Email, err error) {
 	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
 		uidsStr.WriteString("1:*")
@@ -686,7 +687,7 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
-		r, err := d.Exec("UID FETCH "+uidsStr.String()+" ALL", true, 0, nil)
+		r, err := d.Exec(ctx, "UID FETCH "+uidsStr.String()+" ALL", true, 0, nil)
 		if err != nil {
 			return err
 		}
@@ -700,12 +701,12 @@ func (d *Dialer) GetOverviews(uids ...int) (emails map[int]*Email, err error) {
 			return err
 		}
 		return err
-	}, RetryCount, func(err error) error {
+	}, d.effectiveRetryCount(), func(err error) error {
 		errorLog(d.ConnNum, d.Folder, "fetch failed", "error", err)
 		_ = d.Close()
 		return nil
 	}, func() error {
-		return d.Reconnect()
+		return d.Reconnect(ctx)
 	})
 	if err != nil {
 		return nil, err

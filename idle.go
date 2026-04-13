@@ -2,6 +2,7 @@ package imap
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -52,7 +53,7 @@ type IdleHandler struct {
 }
 
 // runIdleEvent processes an IDLE event and calls the appropriate handler
-func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
+func (d *Client) runIdleEvent(data []byte, handler *IdleHandler) error {
 	index := 0
 	event := ""
 	if _, err := fmt.Sscanf(string(data), "%d %s", &index, &event); err != nil {
@@ -89,29 +90,33 @@ func (d *Dialer) runIdleEvent(data []byte, handler *IdleHandler) error {
 	return nil
 }
 
-// StartIdle starts IDLE monitoring with automatic reconnection and timeout handling
-func (d *Dialer) StartIdle(handler *IdleHandler) error {
+// StartIdle starts IDLE monitoring with automatic reconnection and timeout
+// handling. Cancelling ctx stops the background monitor and ends any active
+// IDLE session.
+func (d *Client) StartIdle(ctx context.Context, handler *IdleHandler) error {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
 		for {
+			if err := ctx.Err(); err != nil {
+				return
+			}
 			if !d.Connected {
-				if err := d.Reconnect(); err != nil {
-					if Verbose {
-						warnLog(d.ConnNum, d.Folder, "IDLE reconnect failed", "error", err)
-					}
+				if err := d.Reconnect(ctx); err != nil {
+					warnLog(d.ConnNum, d.Folder, "IDLE reconnect failed", "error", err)
 					return
 				}
 			}
-			if err := d.startIdleSingle(handler); err != nil {
-				if Verbose {
-					warnLog(d.ConnNum, d.Folder, "IDLE session stopped", "error", err)
-				}
+			if err := d.startIdleSingle(ctx, handler); err != nil {
+				warnLog(d.ConnNum, d.Folder, "IDLE session stopped", "error", err)
 				return
 			}
 
 			select {
+			case <-ctx.Done():
+				_ = d.StopIdle()
+				return
 			case <-ticker.C:
 				_ = d.StopIdle()
 			case <-d.idleDone:
@@ -124,7 +129,7 @@ func (d *Dialer) StartIdle(handler *IdleHandler) error {
 }
 
 // startIdleSingle starts a single IDLE session
-func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
+func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) error {
 	if d.State() == StateIdling || d.State() == StateIdlePending {
 		return fmt.Errorf("already entering or in IDLE")
 	}
@@ -143,7 +148,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 			}
 		}()
 
-		_, err := d.Exec("IDLE", true, 0, func(line []byte) error {
+		_, err := d.Exec(ctx, "IDLE", true, 0, func(line []byte) error {
 			line = []byte(strings.ToUpper(string(line)))
 			switch {
 			case bytes.HasPrefix(line, []byte("+")):
@@ -171,9 +176,7 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 			return nil
 		})
 		if err != nil {
-			if Verbose {
-				warnLog(d.ConnNum, d.Folder, "IDLE command error", "error", err)
-			}
+			warnLog(d.ConnNum, d.Folder, "IDLE command error", "error", err)
 			d.setState(StateDisconnected)
 		}
 	}()
@@ -187,15 +190,13 @@ func (d *Dialer) startIdleSingle(handler *IdleHandler) error {
 	}
 }
 
-// StopIdle stops the current IDLE session
-func (d *Dialer) StopIdle() error {
+// StopIdle stops the current IDLE session.
+func (d *Client) StopIdle() error {
 	if d.State() != StateIdling {
 		return fmt.Errorf("not in IDLE state")
 	}
 
-	if Verbose {
-		debugLog(d.ConnNum, d.Folder, "sending DONE to exit IDLE")
-	}
+	debugLog(d.ConnNum, d.Folder, "sending DONE to exit IDLE")
 	if _, err := d.conn.Write([]byte("DONE\r\n")); err != nil {
 		return fmt.Errorf("failed to send DONE: %v", err)
 	}
@@ -213,14 +214,14 @@ func (d *Dialer) StopIdle() error {
 }
 
 // setState sets the connection state with proper locking
-func (d *Dialer) setState(s int) {
+func (d *Client) setState(s int) {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	d.state = s
 }
 
-// State returns the current connection state with proper locking
-func (d *Dialer) State() int {
+// State returns the current connection state with proper locking.
+func (d *Client) State() int {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	return d.state
