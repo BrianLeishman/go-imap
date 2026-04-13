@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// String replacers for escaping/unescaping quotes
+// String replacers for escaping/unescaping quotes in IMAP strings.
 var (
-	AddSlashes    = strings.NewReplacer(`"`, `\"`)
-	RemoveSlashes = strings.NewReplacer(`\"`, `"`)
+	addSlashes    = strings.NewReplacer(`"`, `\"`)
+	removeSlashes = strings.NewReplacer(`\"`, `"`)
 )
 
 // Verbose outputs every command and its response with the IMAP server
@@ -31,5 +31,3 @@ var CommandTimeout time.Duration
 // connections. Use with caution; skipping verification exposes the
 // connection to man-in-the-middle attacks.
 var TLSSkipVerify bool
-
-var lastResp string

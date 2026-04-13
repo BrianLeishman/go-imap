@@ -12,7 +12,6 @@ import (
 	"time"
 
 	retry "github.com/StirlingMarketingGroup/go-retry"
-	"github.com/davecgh/go-spew/spew"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/jhillyerd/enmime/v2"
 	"golang.org/x/net/html/charset"
@@ -106,7 +105,7 @@ func (e EmailAddresses) String() string {
 		}
 		if len(n) != 0 {
 			if strings.ContainsRune(n, ',') {
-				fmt.Fprintf(&emails, `"%s" <%s>`, AddSlashes.Replace(n), e)
+				fmt.Fprintf(&emails, `"%s" <%s>`, addSlashes.Replace(n), e)
 			} else {
 				fmt.Fprintf(&emails, `%s <%s>`, n, e)
 			}
@@ -243,7 +242,7 @@ func (d *Client) MoveEmail(ctx context.Context, uid UID, folder string) (err err
 	if readOnlyState {
 		_ = d.SelectFolder(ctx, d.Folder)
 	}
-	_, err = d.Exec(ctx, `UID MOVE `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
+	_, err = d.Exec(ctx, `UID MOVE `+uid.String()+` "`+addSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
 		_ = d.restoreReadOnly(ctx)
 	}
@@ -264,7 +263,7 @@ func (d *Client) CopyEmail(ctx context.Context, uid UID, folder string) error {
 			return err
 		}
 	}
-	_, err := d.Exec(ctx, `UID COPY `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
+	_, err := d.Exec(ctx, `UID COPY `+uid.String()+` "`+addSlashes.Replace(folder)+`"`, true, 0, nil)
 	if readOnlyState {
 		if e := d.restoreReadOnly(ctx); e != nil && err == nil {
 			err = e
@@ -390,9 +389,8 @@ func (d *Client) parseEmailBody(e *Email, bodyStr string) bool {
 	env, err := enmime.ReadEnvelope(r)
 	if err != nil {
 		if Verbose {
-			warnLog(d.ConnNum, d.Folder, "email body could not be parsed", "error", err)
-			spew.Dump(env)
-			spew.Dump(bodyStr)
+			warnLog(d.ConnNum, d.Folder, "email body could not be parsed",
+				"error", err, "envelope", fmt.Sprintf("%+v", env), "body", bodyStr)
 		}
 		return false
 	}

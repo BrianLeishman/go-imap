@@ -62,7 +62,7 @@ func (m *MockDialer) Exec(command string, expectOK bool, retryCount int, handler
 }
 
 func (m *MockDialer) ExamineFolder(_ context.Context, folder string) error {
-	_, err := m.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+	_, err := m.Exec(`EXAMINE "`+addSlashes.Replace(folder)+`"`, true, RetryCount, nil)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func (m *MockDialer) ExamineFolder(_ context.Context, folder string) error {
 }
 
 func (m *MockDialer) selectAndGetCount(folder string) (int, error) {
-	r, err := m.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+	r, err := m.Exec("SELECT \""+addSlashes.Replace(folder)+"\"", true, RetryCount, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -131,7 +131,7 @@ func TestExamineSelectRedundancy(t *testing.T) {
 
 				// Anti-pattern: Then immediately calls SELECT (gets folder info + write access)
 				// This is redundant because SELECT provides everything EXAMINE does, plus write access
-				_, err = mock.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+				_, err = mock.Exec("SELECT \""+addSlashes.Replace(folder)+"\"", true, RetryCount, nil)
 				if err != nil {
 					t.Errorf("SELECT error = %v", err)
 				}
@@ -153,8 +153,8 @@ func TestExamineSelectRedundancy(t *testing.T) {
 
 			// Verify that both EXAMINE and SELECT were called for each folder
 			for i, folder := range tt.folders {
-				examineCall := `EXAMINE "` + AddSlashes.Replace(folder) + `"`
-				selectCall := `SELECT "` + AddSlashes.Replace(folder) + `"`
+				examineCall := `EXAMINE "` + addSlashes.Replace(folder) + `"`
+				selectCall := `SELECT "` + addSlashes.Replace(folder) + `"`
 
 				if !contains(mock.execCalls[i*2], "EXAMINE") {
 					t.Errorf("Expected EXAMINE call for folder %s, got %s", folder, mock.execCalls[i*2])
@@ -205,7 +205,7 @@ func TestEfficientFolderAccess(t *testing.T) {
 			// ✅ EFFICIENT approach: Use only SELECT (what the library actually does)
 			// This is equivalent to calling selectAndGetCount() for each folder
 			for _, folder := range tt.folders {
-				_, err := mock.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+				_, err := mock.Exec("SELECT \""+addSlashes.Replace(folder)+"\"", true, RetryCount, nil)
 				if err != nil {
 					t.Errorf("SELECT error = %v", err)
 				}
@@ -299,9 +299,9 @@ func TestSelectAndGetCount(t *testing.T) {
 			}
 
 			if tt.expectedError {
-				mock.errors["SELECT \""+AddSlashes.Replace(tt.folder)+"\""] = fmt.Errorf("folder not found: %s", tt.folder)
+				mock.errors["SELECT \""+addSlashes.Replace(tt.folder)+"\""] = fmt.Errorf("folder not found: %s", tt.folder)
 			} else {
-				mock.responses["SELECT \""+AddSlashes.Replace(tt.folder)+"\""] = tt.response
+				mock.responses["SELECT \""+addSlashes.Replace(tt.folder)+"\""] = tt.response
 			}
 
 			count, err := mock.selectAndGetCount(tt.folder)

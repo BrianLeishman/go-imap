@@ -217,8 +217,7 @@ func (d *Client) Exec(ctx context.Context, command string, buildResponse bool, r
 
 	if buildResponse {
 		if resp.Len() != 0 {
-			lastResp = resp.String()
-			return lastResp, nil
+			return resp.String(), nil
 		}
 		return "", nil
 	}

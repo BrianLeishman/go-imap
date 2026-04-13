@@ -27,7 +27,7 @@ type Client struct {
 	Port      int
 	Connected bool
 	ConnNum   int
-	state     int
+	state     State
 	stateMu   sync.Mutex
 	idleStop  chan struct{}
 	idleDone  chan struct{}
@@ -303,6 +303,7 @@ func (d *Client) Clone(ctx context.Context) (*Client, error) {
 			err = d2.SelectFolder(ctx, d.Folder)
 		}
 		if err != nil {
+			_ = d2.Close()
 			return nil, fmt.Errorf("imap clone: %w", err)
 		}
 	}
@@ -355,10 +356,14 @@ func (d *Client) Reconnect(ctx context.Context) error {
 	if d.Folder != "" {
 		if d.ReadOnly {
 			if err := d.ExamineFolder(ctx, d.Folder); err != nil {
+				_ = d.conn.Close()
+				d.Connected = false
 				return fmt.Errorf("imap reconnect examine: %w", err)
 			}
 		} else {
 			if err := d.SelectFolder(ctx, d.Folder); err != nil {
+				_ = d.conn.Close()
+				d.Connected = false
 				return fmt.Errorf("imap reconnect select: %w", err)
 			}
 		}

@@ -64,7 +64,7 @@ func calculateTokenEnd(tokenStart, sizeVal, bufferLen int) (int, error) {
 func makeFetchToken(tokenType TType, r string, tokenStart, tokenEnd int) *Token {
 	switch tokenType {
 	case TQuoted:
-		return &Token{Type: tokenType, Str: RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1]))}
+		return &Token{Type: tokenType, Str: removeSlashes.Replace(string(r[tokenStart : tokenEnd+1]))}
 	case TLiteral:
 		s := string(r[tokenStart : tokenEnd+1])
 		num, err := strconv.ParseInt(s, 10, 64)

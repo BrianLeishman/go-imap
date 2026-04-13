@@ -63,7 +63,7 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 	}
 
 	cmd := fmt.Sprintf(`APPEND "%s"%s%s {%d}`,
-		AddSlashes.Replace(folder), flagStr, dateStr, len(message))
+		addSlashes.Replace(folder), flagStr, dateStr, len(message))
 
 	tag := []byte(strings.ToUpper(xid.New().String()))
 

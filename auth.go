@@ -18,6 +18,6 @@ func (d *Client) Authenticate(ctx context.Context, user string, accessToken stri
 // Login performs LOGIN authentication using username and password.
 func (d *Client) Login(ctx context.Context, username string, password string) error {
 	// Don't retry authentication - auth failures should not trigger reconnection
-	_, err := d.Exec(ctx, fmt.Sprintf(`LOGIN "%s" "%s"`, AddSlashes.Replace(username), AddSlashes.Replace(password)), false, 0, nil)
+	_, err := d.Exec(ctx, fmt.Sprintf(`LOGIN "%s" "%s"`, addSlashes.Replace(username), addSlashes.Replace(password)), false, 0, nil)
 	return err
 }

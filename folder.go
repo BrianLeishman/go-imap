@@ -54,7 +54,7 @@ func (d *Client) GetFolders(ctx context.Context) (folders []string, err error) {
 				}
 				i--
 			}
-			folders = append(folders, RemoveSlashes.Replace(string(line[i+1:end+1])))
+			folders = append(folders, removeSlashes.Replace(string(line[i+1:end+1])))
 		}
 		return err
 	})
@@ -67,7 +67,7 @@ func (d *Client) GetFolders(ctx context.Context) (folders []string, err error) {
 
 // ExamineFolder selects a folder in read-only mode.
 func (d *Client) ExamineFolder(ctx context.Context, folder string) error {
-	_, err := d.Exec(ctx, `EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
+	_, err := d.Exec(ctx, `EXAMINE "`+addSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (d *Client) ExamineFolder(ctx context.Context, folder string) error {
 
 // SelectFolder selects a folder in read-write mode.
 func (d *Client) SelectFolder(ctx context.Context, folder string) error {
-	_, err := d.Exec(ctx, `SELECT "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
+	_, err := d.Exec(ctx, `SELECT "`+addSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (d *Client) SelectFolder(ctx context.Context, folder string) error {
 
 // selectAndGetCount executes SELECT command and extracts message count from EXISTS response.
 func (d *Client) selectAndGetCount(ctx context.Context, folder string) (int, error) {
-	r, err := d.Exec(ctx, "SELECT \""+AddSlashes.Replace(folder)+"\"", true, d.effectiveRetryCount(), nil)
+	r, err := d.Exec(ctx, "SELECT \""+addSlashes.Replace(folder)+"\"", true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -109,7 +109,7 @@ func (d *Client) selectAndGetCount(ctx context.Context, folder string) (int, err
 // CreateFolder creates a new mailbox with the given name.
 // This command is not retried because CREATE is not idempotent.
 func (d *Client) CreateFolder(ctx context.Context, name string) error {
-	_, err := d.Exec(ctx, `CREATE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
+	_, err := d.Exec(ctx, `CREATE "`+addSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap create folder: %w", err)
 	}
@@ -120,7 +120,7 @@ func (d *Client) CreateFolder(ctx context.Context, name string) error {
 // If the deleted folder is currently selected, the folder state is cleared.
 // This command is not retried because DELETE is not idempotent.
 func (d *Client) DeleteFolder(ctx context.Context, name string) error {
-	_, err := d.Exec(ctx, `DELETE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
+	_, err := d.Exec(ctx, `DELETE "`+addSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap delete folder: %w", err)
 	}
@@ -135,7 +135,7 @@ func (d *Client) DeleteFolder(ctx context.Context, name string) error {
 // If the renamed folder is currently selected, the tracked folder name is updated.
 // This command is not retried because RENAME is not idempotent.
 func (d *Client) RenameFolder(ctx context.Context, oldName, newName string) error {
-	_, err := d.Exec(ctx, `RENAME "`+AddSlashes.Replace(oldName)+`" "`+AddSlashes.Replace(newName)+`"`, false, 0, nil)
+	_, err := d.Exec(ctx, `RENAME "`+addSlashes.Replace(oldName)+`" "`+addSlashes.Replace(newName)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap rename folder: %w", err)
 	}

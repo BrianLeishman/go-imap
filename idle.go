@@ -11,15 +11,37 @@ import (
 	"unicode"
 )
 
-// Connection state constants
+// State represents the connection state of a Client.
+type State int
+
+// Connection state constants.
 const (
-	StateDisconnected = iota
+	StateDisconnected State = iota
 	StateConnected
 	StateSelected
 	StateIdlePending
 	StateIdling
 	StateStoppingIdle
 )
+
+// String returns the human-readable name of the state.
+func (s State) String() string {
+	switch s {
+	case StateDisconnected:
+		return "Disconnected"
+	case StateConnected:
+		return "Connected"
+	case StateSelected:
+		return "Selected"
+	case StateIdlePending:
+		return "IdlePending"
+	case StateIdling:
+		return "Idling"
+	case StateStoppingIdle:
+		return "StoppingIdle"
+	}
+	return "Unknown"
+}
 
 // IDLE event type constants
 const (
@@ -227,7 +249,13 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 		<-d.idleStop
 		return ctx.Err()
 	case <-time.After(5 * time.Second):
-		d.setState(StateSelected)
+		// Server never sent "+ idling". Close the socket to unblock the
+		// detached Exec goroutine and wait for it to exit before returning;
+		// otherwise the goroutine leaks and the Client is left in an
+		// indeterminate IDLE state.
+		_ = d.Close()
+		d.setState(StateDisconnected)
+		<-d.idleStop
 		return fmt.Errorf("timeout waiting for + IDLE response")
 	}
 }
@@ -256,14 +284,14 @@ func (d *Client) StopIdle() error {
 }
 
 // setState sets the connection state with proper locking
-func (d *Client) setState(s int) {
+func (d *Client) setState(s State) {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	d.state = s
 }
 
 // State returns the current connection state with proper locking.
-func (d *Client) State() int {
+func (d *Client) State() State {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	return d.state

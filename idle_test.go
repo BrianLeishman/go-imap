@@ -183,7 +183,7 @@ func TestSetState_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(state int) {
 			defer wg.Done()
-			d.setState(state % 6)
+			d.setState(State(state % 6))
 			_ = d.State()
 		}(i)
 	}
