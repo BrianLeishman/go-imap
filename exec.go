@@ -148,7 +148,7 @@ func (d *Client) execOnce(ctx context.Context, command string, buildResponse boo
 		oklen := 3
 		if len(line) >= taglen+oklen && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+oklen], []byte("OK")) {
-				return resp, fmt.Errorf("imap command failed: %s", line[taglen+oklen+1:])
+				return resp, parseCommandError(string(tag), commandVerb(command), line[taglen+1:])
 			}
 			break
 		}

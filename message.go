@@ -513,8 +513,14 @@ func (d *Client) GetEmails(ctx context.Context, uids ...UID) (emails map[UID]*Em
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
+		if cerr := ctx.Err(); cerr != nil {
+			return &retry.PermFail{Err: cerr}
+		}
 		r, err := d.Exec(ctx, "UID FETCH "+uidsStr.String()+" BODY.PEEK[]", true, 0, nil)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return &retry.PermFail{Err: cerr}
+			}
 			return err
 		}
 
@@ -735,8 +741,14 @@ func (d *Client) GetOverviews(ctx context.Context, uids ...UID) (emails map[UID]
 
 	var records [][]*Token
 	err = retry.Retry(func() (err error) {
+		if cerr := ctx.Err(); cerr != nil {
+			return &retry.PermFail{Err: cerr}
+		}
 		r, err := d.Exec(ctx, "UID FETCH "+uidsStr.String()+" ALL", true, 0, nil)
 		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return &retry.PermFail{Err: cerr}
+			}
 			return err
 		}
 

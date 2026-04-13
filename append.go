@@ -28,7 +28,7 @@ func (d *Client) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 
 		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
+				return parseCommandError(string(tag), "APPEND", line[taglen+1:])
 			}
 			return nil
 		}
@@ -90,19 +90,33 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 		return fmt.Errorf("imap append write command: %w", wrapCtxErr(ctx, err))
 	}
 
-	// Phase 2: Wait for continuation response (+)
+	// Phase 2: Wait for continuation response (+). The server may emit
+	// untagged responses (e.g. "* OK ...") first, and may reject the
+	// command outright with a tagged NO/BAD/BYE before requesting the
+	// literal — surface those as CommandError so callers can inspect
+	// response codes like [TRYCREATE] or [OVERQUOTA].
 	r := bufio.NewReader(d.conn)
-	line, err := r.ReadBytes('\n')
-	if err != nil {
-		_ = d.Close()
-		return fmt.Errorf("imap append read continuation: %w", wrapCtxErr(ctx, err))
-	}
+	taglen := len(tag)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			_ = d.Close()
+			return fmt.Errorf("imap append read continuation: %w", wrapCtxErr(ctx, err))
+		}
 
-	if Verbose && !SkipResponses {
-		debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
-	}
+		if Verbose && !SkipResponses {
+			debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
+		}
 
-	if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
+			break
+		}
+		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
+			return parseCommandError(string(tag), "APPEND", line[taglen+1:])
+		}
+		if bytes.HasPrefix(line, []byte("* ")) {
+			continue
+		}
 		return fmt.Errorf("imap append: expected continuation (+), got: %s", dropNl(line))
 	}
 
@@ -118,9 +132,19 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 		return fmt.Errorf("imap append write crlf: %w", wrapCtxErr(ctx, err))
 	}
 
-	// Phase 4: Read the tagged response
+	// Phase 4: Read the tagged response. If ctx was cancelled mid-flight
+	// the watchdog has poisoned the deadline and waitForTaggedOK will
+	// return a timeout error; close the socket so the next caller doesn't
+	// consume a tagged completion the server may still emit. Once the
+	// tagged OK has been read the APPEND is committed server-side, so we
+	// must report success even if ctx was cancelled in the meantime —
+	// otherwise a retrying caller would duplicate the message.
 	if err := d.waitForTaggedOK(r, tag); err != nil {
-		return wrapCtxErr(ctx, err)
+		if cerr := ctx.Err(); cerr != nil {
+			_ = d.Close()
+			return cerr
+		}
+		return err
 	}
 	return nil
 }

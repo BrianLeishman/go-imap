@@ -46,8 +46,16 @@ func credsFromAuth(a Authenticator) (string, string) {
 	switch v := a.(type) {
 	case PasswordAuth:
 		return v.Username, v.Password
+	case *PasswordAuth:
+		if v != nil {
+			return v.Username, v.Password
+		}
 	case XOAuth2:
 		return v.Username, v.AccessToken
+	case *XOAuth2:
+		if v != nil {
+			return v.Username, v.AccessToken
+		}
 	}
 	return "", ""
 }
@@ -92,14 +100,7 @@ func (d *Client) SetAuth(a Authenticator) {
 	// Update stored opts so Clone re-dials with the current credentials.
 	d.opts.Auth = a
 	// Keep username/password mirrored for diagnostic/log sanitization.
-	switch v := a.(type) {
-	case PasswordAuth:
-		d.Username = v.Username
-		d.password = v.Password
-	case XOAuth2:
-		d.Username = v.Username
-		d.password = v.AccessToken
-	}
+	d.Username, d.password = credsFromAuth(a)
 }
 
 // Dialer is a deprecated alias for Client retained so that existing callers
@@ -302,7 +303,7 @@ func (d *Client) Clone(ctx context.Context) (*Client, error) {
 			err = d2.SelectFolder(ctx, d.Folder)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("imap clone: %s", err)
+			return nil, fmt.Errorf("imap clone: %w", err)
 		}
 	}
 	return d2, nil
@@ -314,7 +315,7 @@ func (d *Client) Close() (err error) {
 		debugLog(d.ConnNum, d.Folder, "closing connection")
 		err = d.conn.Close()
 		if err != nil {
-			return fmt.Errorf("imap close: %s", err)
+			return fmt.Errorf("imap close: %w", err)
 		}
 		d.Connected = false
 	}
@@ -338,7 +339,7 @@ func (d *Client) Reconnect(ctx context.Context) error {
 	}
 	conn, err := dialHost(ctx, dialOpts)
 	if err != nil {
-		return fmt.Errorf("imap reconnect dial: %s", err)
+		return fmt.Errorf("imap reconnect dial: %w", err)
 	}
 	d.conn = conn
 	d.Connected = true
@@ -347,18 +348,18 @@ func (d *Client) Reconnect(ctx context.Context) error {
 		if err := d.auth.authenticate(ctx, d); err != nil {
 			_ = d.conn.Close()
 			d.Connected = false
-			return fmt.Errorf("imap reconnect auth: %s", err)
+			return fmt.Errorf("imap reconnect auth: %w", err)
 		}
 	}
 
 	if d.Folder != "" {
 		if d.ReadOnly {
 			if err := d.ExamineFolder(ctx, d.Folder); err != nil {
-				return fmt.Errorf("imap reconnect examine: %s", err)
+				return fmt.Errorf("imap reconnect examine: %w", err)
 			}
 		} else {
 			if err := d.SelectFolder(ctx, d.Folder); err != nil {
-				return fmt.Errorf("imap reconnect select: %s", err)
+				return fmt.Errorf("imap reconnect select: %w", err)
 			}
 		}
 	}
