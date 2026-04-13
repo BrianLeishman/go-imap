@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"reflect"
 	"strconv"
@@ -17,6 +18,34 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
+// uidFromToken validates and converts a parsed TNumber into a UID, rejecting
+// values outside RFC 3501's 32-bit unsigned range so a malformed server
+// response cannot silently wrap.
+func uidFromToken(n int64) (UID, error) {
+	if n < 0 || n > math.MaxUint32 {
+		return 0, fmt.Errorf("UID %d out of 32-bit range", n)
+	}
+	return UID(n), nil
+}
+
+// UID is an IMAP unique identifier (RFC 3501 §2.3.1.1). UIDs are 32-bit
+// unsigned integers scoped to a mailbox + UIDVALIDITY value.
+type UID uint32
+
+// MessageSeq is an IMAP message sequence number (RFC 3501 §2.3.1.2). Sequence
+// numbers are 1-based positions within the currently selected mailbox and
+// change as messages are added or expunged — prefer UIDs for durable
+// references. Zero is not a valid sequence number.
+type MessageSeq uint32
+
+// String returns the UID formatted as a decimal string, suitable for
+// embedding in IMAP command arguments.
+func (u UID) String() string { return strconv.FormatUint(uint64(u), 10) }
+
+// String returns the sequence number formatted as a decimal string, suitable
+// for embedding in IMAP command arguments.
+func (s MessageSeq) String() string { return strconv.FormatUint(uint64(s), 10) }
+
 // EmailAddresses represents a map of email addresses to display names
 type EmailAddresses map[string]string
 
@@ -27,7 +56,7 @@ type Email struct {
 	Sent        time.Time
 	Size        uint64
 	Subject     string
-	UID         int
+	UID         UID
 	MessageID   string
 	From        EmailAddresses
 	To          EmailAddresses
@@ -151,7 +180,7 @@ func (a Attachment) String() string {
 //   - "SINCE 1-Jan-2024" - messages since a date
 //
 // Note: For retrieving the N most recent messages, use GetLastNUIDs instead.
-func (d *Client) GetUIDs(ctx context.Context, search string) (uids []int, err error) {
+func (d *Client) GetUIDs(ctx context.Context, search string) (uids []UID, err error) {
 	r, err := d.Exec(ctx, `UID SEARCH `+search, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return nil, err
@@ -170,7 +199,7 @@ func (d *Client) GetUIDs(ctx context.Context, search string) (uids []int, err er
 //
 //	// Get the 10 most recent messages
 //	uids, err := conn.GetLastNUIDs(10)
-func (d *Client) GetLastNUIDs(ctx context.Context, n int) ([]int, error) {
+func (d *Client) GetLastNUIDs(ctx context.Context, n int) ([]UID, error) {
 	if n <= 0 {
 		return nil, nil
 	}
@@ -188,7 +217,7 @@ func (d *Client) GetLastNUIDs(ctx context.Context, n int) ([]int, error) {
 //
 // The folder of interest must be already selected in either read-only mode,
 // ExamineFolder, or in read-write mode, SelectFolder.
-func (d *Client) GetMaxUID(ctx context.Context) (uid int, err error) {
+func (d *Client) GetMaxUID(ctx context.Context) (uid UID, err error) {
 	r, err := d.Exec(ctx, "UID SEARCH RETURN (MAX) 1:*", true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return 0, err
@@ -197,13 +226,13 @@ func (d *Client) GetMaxUID(ctx context.Context) (uid int, err error) {
 }
 
 // MoveEmail moves an email to a different folder.
-func (d *Client) MoveEmail(ctx context.Context, uid int, folder string) (err error) {
+func (d *Client) MoveEmail(ctx context.Context, uid UID, folder string) (err error) {
 	// if we are currently read-only, switch to SELECT for the move-operation
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
 		_ = d.SelectFolder(ctx, d.Folder)
 	}
-	_, err = d.Exec(ctx, `UID MOVE `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
+	_, err = d.Exec(ctx, `UID MOVE `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if readOnlyState {
 		_ = d.ExamineFolder(ctx, d.Folder)
 	}
@@ -217,14 +246,14 @@ func (d *Client) MoveEmail(ctx context.Context, uid int, folder string) (err err
 // CopyEmail copies an email to a different folder.
 // Unlike MoveEmail, the original message remains in the current folder.
 // UID COPY is not retried because duplicating a message is not idempotent.
-func (d *Client) CopyEmail(ctx context.Context, uid int, folder string) error {
+func (d *Client) CopyEmail(ctx context.Context, uid UID, folder string) error {
 	readOnlyState := d.ReadOnly
 	if readOnlyState {
 		if err := d.SelectFolder(ctx, d.Folder); err != nil {
 			return err
 		}
 	}
-	_, err := d.Exec(ctx, `UID COPY `+strconv.Itoa(uid)+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
+	_, err := d.Exec(ctx, `UID COPY `+uid.String()+` "`+AddSlashes.Replace(folder)+`"`, true, 0, nil)
 	if readOnlyState {
 		if e := d.ExamineFolder(ctx, d.Folder); e != nil && err == nil {
 			err = e
@@ -234,7 +263,7 @@ func (d *Client) CopyEmail(ctx context.Context, uid int, folder string) error {
 }
 
 // MarkSeen marks an email as seen/read.
-func (d *Client) MarkSeen(ctx context.Context, uid int) (err error) {
+func (d *Client) MarkSeen(ctx context.Context, uid UID) (err error) {
 	flags := Flags{
 		Seen: FlagAdd,
 	}
@@ -252,7 +281,7 @@ func (d *Client) MarkSeen(ctx context.Context, uid int) (err error) {
 }
 
 // DeleteEmail marks an email for deletion.
-func (d *Client) DeleteEmail(ctx context.Context, uid int) (err error) {
+func (d *Client) DeleteEmail(ctx context.Context, uid UID) (err error) {
 	flags := Flags{
 		Deleted: FlagAdd,
 	}
@@ -291,7 +320,7 @@ func (d *Client) Expunge(ctx context.Context) (err error) {
 }
 
 // SetFlags sets message flags (seen, deleted, etc.).
-func (d *Client) SetFlags(ctx context.Context, uid int, flags Flags) (err error) {
+func (d *Client) SetFlags(ctx context.Context, uid UID, flags Flags) (err error) {
 	// craft the flags-string
 	addFlags := []string{}
 	removeFlags := []string{}
@@ -431,7 +460,11 @@ func (d *Client) parseEmailRecord(tks []*Token) (*Email, bool, error) {
 			if err := d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
 				return nil, false, err
 			}
-			e.UID = tks[i+1].Num
+			u, err := uidFromToken(tks[i+1].Num)
+			if err != nil {
+				return nil, false, err
+			}
+			e.UID = u
 			skip++
 		}
 	}
@@ -439,7 +472,7 @@ func (d *Client) parseEmailRecord(tks []*Token) (*Email, bool, error) {
 }
 
 // GetEmails retrieves full email messages including body content.
-func (d *Client) GetEmails(ctx context.Context, uids ...int) (emails map[int]*Email, err error) {
+func (d *Client) GetEmails(ctx context.Context, uids ...UID) (emails map[UID]*Email, err error) {
 	emails, err = d.GetOverviews(ctx, uids...)
 	if err != nil {
 		return nil, err
@@ -462,7 +495,7 @@ func (d *Client) GetEmails(ctx context.Context, uids ...int) (emails map[int]*Em
 			if i != 0 {
 				uidsStr.WriteByte(',')
 			}
-			uidsStr.WriteString(strconv.Itoa(u))
+			uidsStr.WriteString(u.String())
 			i++
 		}
 	}
@@ -639,7 +672,11 @@ func (d *Client) parseOverviewField(e *Email, tks []*Token, i int, fieldName str
 		if err = d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
 			return 0, err
 		}
-		e.UID = tks[i+1].Num
+		u, err := uidFromToken(tks[i+1].Num)
+		if err != nil {
+			return 0, err
+		}
+		e.UID = u
 		return 1, nil
 	}
 	return 0, nil
@@ -668,7 +705,7 @@ func (d *Client) parseOverviewRecord(tks []*Token) (*Email, error) {
 }
 
 // GetOverviews retrieves email overview information (headers, flags, etc.).
-func (d *Client) GetOverviews(ctx context.Context, uids ...int) (emails map[int]*Email, err error) {
+func (d *Client) GetOverviews(ctx context.Context, uids ...UID) (emails map[UID]*Email, err error) {
 	uidsStr := strings.Builder{}
 	if len(uids) == 0 {
 		uidsStr.WriteString("1:*")
@@ -681,7 +718,7 @@ func (d *Client) GetOverviews(ctx context.Context, uids ...int) (emails map[int]
 			if i != 0 {
 				uidsStr.WriteByte(',')
 			}
-			uidsStr.WriteString(strconv.Itoa(u))
+			uidsStr.WriteString(u.String())
 		}
 	}
 
@@ -712,7 +749,7 @@ func (d *Client) GetOverviews(ctx context.Context, uids ...int) (emails map[int]
 		return nil, err
 	}
 
-	emails = make(map[int]*Email, len(uids))
+	emails = make(map[UID]*Email, len(uids))
 
 	for _, tks := range records {
 		e, err := d.parseOverviewRecord(tks)

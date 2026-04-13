@@ -20,11 +20,13 @@ var (
 	searchMaxUIDRE   = regexp.MustCompile(`(?i)\* ESEARCH .* MAX (\d+)`)
 )
 
-// Token represents a parsed IMAP token
+// Token represents a parsed IMAP token. Num is int64 so that any RFC-allowed
+// 32-bit unsigned IMAP number (UID, sequence number) parses losslessly even
+// on 32-bit builds, and so that RFC822.SIZE values can fit without truncation.
 type Token struct {
 	Type   TType
 	Str    string
-	Num    int
+	Num    int64
 	Tokens []*Token
 }
 
@@ -65,7 +67,7 @@ func makeFetchToken(tokenType TType, r string, tokenStart, tokenEnd int) *Token 
 		return &Token{Type: tokenType, Str: RemoveSlashes.Replace(string(r[tokenStart : tokenEnd+1]))}
 	case TLiteral:
 		s := string(r[tokenStart : tokenEnd+1])
-		num, err := strconv.Atoi(s)
+		num, err := strconv.ParseInt(s, 10, 64)
 		if err == nil {
 			return &Token{Type: TNumber, Num: num}
 		}
@@ -419,7 +421,7 @@ func extractFetchContent(body string, start int) (fetchContentStart, fetchConten
 	}
 
 	seqNumStr := rest[:idx]
-	if _, convErr := strconv.Atoi(seqNumStr); convErr != nil {
+	if _, convErr := strconv.ParseUint(seqNumStr, 10, 32); convErr != nil {
 		return 0, 0, fmt.Errorf("unable to parse Fetch line (invalid seq num %s): %#v: %w", seqNumStr, lineSnippet(), convErr)
 	}
 
@@ -485,7 +487,7 @@ func (d *Client) ParseFetchResponse(responseBody string) (records [][]*Token, er
 }
 
 // parseUIDSearchResponse parses UID SEARCH command responses
-func parseUIDSearchResponse(r string) ([]int, error) {
+func parseUIDSearchResponse(r string) ([]UID, error) {
 	normalized := strings.ReplaceAll(r, nl, "\n")
 	for rawLine := range strings.SplitSeq(normalized, "\n") {
 		line := strings.TrimSpace(rawLine)
@@ -498,13 +500,13 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 			continue
 		}
 
-		uids := make([]int, 0, len(fields)-2)
+		uids := make([]UID, 0, len(fields)-2)
 		for _, f := range fields[2:] {
-			u, err := strconv.Atoi(f)
+			u, err := strconv.ParseUint(f, 10, 32)
 			if err != nil {
 				return nil, fmt.Errorf("parse uid %q: %w", f, err)
 			}
-			uids = append(uids, u)
+			uids = append(uids, UID(u))
 		}
 		return uids, nil
 	}
@@ -526,7 +528,7 @@ func parseUIDSearchResponse(r string) ([]int, error) {
 //
 // In that case this function returns 0, nil.
 // ref https://www.rfc-editor.org/rfc/rfc4731.html#page-2
-func parseMaxUIDSearchResponse(r string) (int, error) {
+func parseMaxUIDSearchResponse(r string) (UID, error) {
 	normalized := strings.ReplaceAll(r, nl, "\n")
 	for rawLine := range strings.SplitSeq(normalized, "\n") {
 		line := strings.TrimSpace(rawLine)
@@ -535,11 +537,11 @@ func parseMaxUIDSearchResponse(r string) (int, error) {
 		}
 
 		if matches := searchMaxUIDRE.FindStringSubmatch(line); len(matches) > 1 {
-			maxUID, err := strconv.Atoi(matches[1])
+			maxUID, err := strconv.ParseUint(matches[1], 10, 32)
 			if err != nil {
 				return 0, fmt.Errorf("parse max uid %q: %w", matches[1], err)
 			}
-			return maxUID, nil
+			return UID(maxUID), nil
 		}
 
 		// Check for ESEARCH line without a valid MAX capture

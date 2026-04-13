@@ -30,7 +30,7 @@ func connectAndSelectInbox() (*imap.Client, error) {
 	return m, nil
 }
 
-func fetchOverviews(m *imap.Client, uids []int) error {
+func fetchOverviews(m *imap.Client, uids []imap.UID) error {
 	fmt.Println("=== Fetching Overviews (Headers Only - FAST) ===")
 
 	overviews, err := m.GetOverviews(ctx, uids...)
@@ -92,7 +92,7 @@ func printAttachments(email *imap.Email) {
 	}
 }
 
-func fetchFullEmails(m *imap.Client, uids []int) (map[int]*imap.Email, error) {
+func fetchFullEmails(m *imap.Client, uids []imap.UID) (map[imap.UID]*imap.Email, error) {
 	fmt.Println("=== Fetching Full Emails (With Bodies - SLOWER) ===")
 
 	// Limit to first 3 for full fetch (to keep example fast)
@@ -129,7 +129,7 @@ func fetchFullEmails(m *imap.Client, uids []int) (map[int]*imap.Email, error) {
 	return emails, nil
 }
 
-func printEmailSummaries(emails map[int]*imap.Email) {
+func printEmailSummaries(emails map[imap.UID]*imap.Email) {
 	fmt.Println("\n=== Using the String() Method ===")
 
 	for uid, email := range emails {
@@ -139,7 +139,7 @@ func printEmailSummaries(emails map[int]*imap.Email) {
 	}
 }
 
-func processAttachments(emails map[int]*imap.Email) {
+func processAttachments(emails map[imap.UID]*imap.Email) {
 	fmt.Println("\n=== Processing Attachments Example ===")
 
 	for uid, email := range emails {

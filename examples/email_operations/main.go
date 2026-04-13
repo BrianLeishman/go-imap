@@ -23,7 +23,7 @@ func connectAndLogin() (*imap.Client, error) {
 	return m, nil
 }
 
-func getFirstUIDs(m *imap.Client) ([]int, error) {
+func getFirstUIDs(m *imap.Client) ([]imap.UID, error) {
 	err := m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
@@ -52,7 +52,7 @@ func findArchiveFolder(m *imap.Client) bool {
 	return false
 }
 
-func demonstrateMoveEmail(m *imap.Client, uid int, archiveExists bool) {
+func demonstrateMoveEmail(m *imap.Client, uid imap.UID, archiveExists bool) {
 	fmt.Println("=== Moving Emails ===")
 
 	if !archiveExists {
@@ -78,7 +78,7 @@ func demonstrateMoveEmail(m *imap.Client, uid int, archiveExists bool) {
 	fmt.Printf("Moved email back to INBOX for demo\n")
 }
 
-func demonstrateCopyEmail(m *imap.Client, uid int, archiveExists bool) {
+func demonstrateCopyEmail(m *imap.Client, uid imap.UID, archiveExists bool) {
 	fmt.Println("\n=== Copying Emails ===")
 
 	if !archiveExists {
@@ -107,7 +107,7 @@ func demonstrateAppend(m *imap.Client) {
 	}
 }
 
-func demonstrateIndividualFlags(m *imap.Client, uid int) {
+func demonstrateIndividualFlags(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Setting Individual Flags ===")
 
 	err := m.MarkSeen(ctx, uid)
@@ -128,7 +128,7 @@ func demonstrateIndividualFlags(m *imap.Client, uid int) {
 	}
 }
 
-func demonstrateMultipleFlags(m *imap.Client, uid int) {
+func demonstrateMultipleFlags(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Setting Multiple Flags ===")
 
 	flags := imap.Flags{
@@ -153,7 +153,7 @@ func demonstrateMultipleFlags(m *imap.Client, uid int) {
 	}
 }
 
-func demonstrateCustomKeywords(m *imap.Client, uid int) {
+func demonstrateCustomKeywords(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Custom Keywords ===")
 
 	flags := imap.Flags{
@@ -175,7 +175,7 @@ func demonstrateCustomKeywords(m *imap.Client, uid int) {
 	}
 }
 
-func demonstrateBatchFlags(m *imap.Client, uids []int) {
+func demonstrateBatchFlags(m *imap.Client, uids []imap.UID) {
 	fmt.Println("\n=== Batch Flag Operations ===")
 
 	if len(uids) <= 1 {

@@ -33,11 +33,14 @@ func connectAndSelect() (*imap.Client, error) {
 }
 
 func handleNewEmail(m *imap.Client, e imap.ExistsEvent) {
-	fmt.Printf("[EXISTS] New message arrived! Message index: %d\n", e.MessageIndex)
+	fmt.Printf("[EXISTS] New message arrived! Sequence number: %d\n", e.SeqNum)
 	fmt.Printf("         Timestamp: %s\n", time.Now().Format("15:04:05"))
 	fmt.Printf("         Fetching new email details...\n")
 
-	uids, err := m.GetUIDs(ctx, fmt.Sprintf("%d", e.MessageIndex))
+	// Resolve sequence number -> UID via SEARCH (a bare number in IMAP
+	// SEARCH matches by sequence number). EXISTS reports the new total
+	// count, which equals the sequence number of the newest message.
+	uids, err := m.GetUIDs(ctx, fmt.Sprintf("%d", e.SeqNum))
 	if err != nil || len(uids) == 0 {
 		fmt.Println()
 		return
@@ -82,14 +85,14 @@ func createIdleHandler(m *imap.Client) *imap.IdleHandler {
 		},
 
 		OnExpunge: func(e imap.ExpungeEvent) {
-			fmt.Printf("[EXPUNGE] Message removed at index: %d\n", e.MessageIndex)
+			fmt.Printf("[EXPUNGE] Message removed at sequence number: %d\n", e.SeqNum)
 			fmt.Printf("          Timestamp: %s\n", time.Now().Format("15:04:05"))
 			fmt.Println()
 		},
 
 		OnFetch: func(e imap.FetchEvent) {
 			fmt.Printf("[FETCH] Flags changed\n")
-			fmt.Printf("        Message Index: %d\n", e.MessageIndex)
+			fmt.Printf("        Sequence Number: %d\n", e.SeqNum)
 			fmt.Printf("        UID: %d\n", e.UID)
 			fmt.Printf("        New Flags: %v\n", e.Flags)
 			fmt.Printf("        Timestamp: %s\n", time.Now().Format("15:04:05"))

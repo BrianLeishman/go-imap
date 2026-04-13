@@ -10,8 +10,8 @@ import (
 )
 
 
-func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
-	emails := make(map[int]*Email, len(records))
+func parseRecords(d *Dialer, records [][]*Token) (map[UID]*Email, error) {
+	emails := make(map[UID]*Email, len(records))
 	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
 		label = strings.Replace(label, "windows-", "cp", -1)
 		encoding, _ := charset.Lookup(label)
@@ -84,7 +84,11 @@ func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
 				if err := d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
 					return nil, err
 				}
-				e.UID = tks[i+1].Num
+				u, err := uidFromToken(tks[i+1].Num)
+				if err != nil {
+					return nil, err
+				}
+				e.UID = u
 				skip++
 			}
 		}

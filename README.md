@@ -286,7 +286,7 @@ if err != nil { panic(err) }
 
 accessibleFolders := 0
 totalEmails := 0
-maxUID := 0
+var maxUID imap.UID
 
 for _, stat := range stats {
     if stat.Error != nil {
@@ -607,27 +607,28 @@ fmt.Println("Permanently deleted all marked emails")
 
 // Create an event handler
 handler := &imap.IdleHandler{
-    // New email arrived
+    // New email arrived. SeqNum is the new EXISTS count, which is also the
+    // sequence number of the newest message in the mailbox.
     OnExists: func(e imap.ExistsEvent) {
-        fmt.Printf("[EXISTS] New message at index: %d\n", e.MessageIndex)
-        // Example output: [EXISTS] New message at index: 343
+        fmt.Printf("[EXISTS] New message at sequence number: %d\n", e.SeqNum)
+        // Example output: [EXISTS] New message at sequence number: 343
 
-        // You might want to fetch the new email:
-        // uids, _ := m.GetUIDs(ctx, fmt.Sprintf("%d", e.MessageIndex))
+        // To fetch the new email, search by sequence number to resolve a UID:
+        // uids, _ := m.GetUIDs(ctx, fmt.Sprintf("%d", e.SeqNum))
         // emails, _ := m.GetEmails(ctx, uids...)
     },
 
     // Email was deleted/expunged
     OnExpunge: func(e imap.ExpungeEvent) {
-        fmt.Printf("[EXPUNGE] Message removed at index: %d\n", e.MessageIndex)
-        // Example output: [EXPUNGE] Message removed at index: 125
+        fmt.Printf("[EXPUNGE] Message removed at sequence number: %d\n", e.SeqNum)
+        // Example output: [EXPUNGE] Message removed at sequence number: 125
     },
 
     // Email flags changed (read, flagged, etc.)
     OnFetch: func(e imap.FetchEvent) {
-        fmt.Printf("[FETCH] Flags changed - Index: %d, UID: %d, Flags: %v\n",
-            e.MessageIndex, e.UID, e.Flags)
-        // Example output: [FETCH] Flags changed - Index: 42, UID: 245, Flags: [\Seen \Flagged]
+        fmt.Printf("[FETCH] Flags changed - SeqNum: %d, UID: %d, Flags: %v\n",
+            e.SeqNum, e.UID, e.Flags)
+        // Example output: [FETCH] Flags changed - SeqNum: 42, UID: 245, Flags: [\Seen \Flagged]
     },
 }
 
@@ -651,10 +652,10 @@ func monitorInbox(m *imap.Dialer) {
 
     handler := &imap.IdleHandler{
         OnExists: func(e imap.ExistsEvent) {
-            fmt.Printf("📬 New email! Total messages now: %d\n", e.MessageIndex)
+            fmt.Printf("📬 New email! Total messages now: %d\n", e.SeqNum)
         },
         OnExpunge: func(e imap.ExpungeEvent) {
-            fmt.Printf("🗑️ Email deleted at position %d\n", e.MessageIndex)
+            fmt.Printf("🗑️ Email deleted at position %d\n", e.SeqNum)
         },
         OnFetch: func(e imap.FetchEvent) {
             fmt.Printf("📝 Email %d updated with flags: %v\n", e.UID, e.Flags)
@@ -857,7 +858,7 @@ func main() {
     fmt.Println("\n👀 Monitoring for new emails (10 seconds)...")
     handler := &imap.IdleHandler{
         OnExists: func(e imap.ExistsEvent) {
-            fmt.Printf("  📬 New email arrived! (message #%d)\n", e.MessageIndex)
+            fmt.Printf("  📬 New email arrived! (message #%d)\n", e.SeqNum)
         },
     }
 

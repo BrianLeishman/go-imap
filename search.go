@@ -53,7 +53,7 @@ func (s *SearchBuilder) buildRaw() string {
 // Example:
 //
 //	uids, err := conn.SearchUIDs(ctx, imap.Search().From("alice@example.com").Unseen())
-func (d *Client) SearchUIDs(ctx context.Context, search *SearchBuilder) ([]int, error) {
+func (d *Client) SearchUIDs(ctx context.Context, search *SearchBuilder) ([]UID, error) {
 	return d.GetUIDs(ctx, search.Build())
 }
 

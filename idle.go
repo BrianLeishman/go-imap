@@ -28,21 +28,23 @@ const (
 	IdleEventFetch   = "FETCH"
 )
 
-// ExistsEvent represents an EXISTS event from IDLE
+// ExistsEvent represents an EXISTS event from IDLE.
+// SeqNum is the new total message count in the mailbox (RFC 3501 §7.3.1).
 type ExistsEvent struct {
-	MessageIndex int
+	SeqNum MessageSeq
 }
 
-// ExpungeEvent represents an EXPUNGE event from IDLE
+// ExpungeEvent represents an EXPUNGE event from IDLE.
+// SeqNum is the sequence number of the expunged message (RFC 3501 §7.4.1).
 type ExpungeEvent struct {
-	MessageIndex int
+	SeqNum MessageSeq
 }
 
-// FetchEvent represents a FETCH event from IDLE
+// FetchEvent represents a FETCH event from IDLE.
 type FetchEvent struct {
-	MessageIndex int
-	UID          uint32
-	Flags        []string
+	SeqNum MessageSeq
+	UID    UID
+	Flags  []string
 }
 
 // IdleHandler provides callbacks for IDLE events
@@ -52,39 +54,64 @@ type IdleHandler struct {
 	OnFetch   func(event FetchEvent)
 }
 
+// idleFetchUIDRE extracts the UID from an IDLE FETCH event payload.
+var idleFetchUIDRE = regexp.MustCompile(`(?i)\bUID\s+(\d+)`)
+
+// idleFetchFlagsRE extracts the FLAGS list from an IDLE FETCH event payload.
+var idleFetchFlagsRE = regexp.MustCompile(`(?i)FLAGS\s*\(([^)]*)\)`)
+
+// idleFetchHeadRE captures the leading "<seq> FETCH (" of an IDLE FETCH line.
+var idleFetchHeadRE = regexp.MustCompile(`(?i)^(\d+)\s+FETCH\s+\(`)
+
 // runIdleEvent processes an IDLE event and calls the appropriate handler
 func (d *Client) runIdleEvent(data []byte, handler *IdleHandler) error {
-	index := 0
-	event := ""
-	if _, err := fmt.Sscanf(string(data), "%d %s", &index, &event); err != nil {
+	str := string(data)
+	spaceIdx := strings.IndexByte(str, ' ')
+	if spaceIdx <= 0 {
 		return fmt.Errorf("invalid IDLE event format: %s", data)
 	}
+	seqStr := str[:spaceIdx]
+	seqNum, err := strconv.ParseUint(seqStr, 10, 32)
+	if err != nil {
+		return fmt.Errorf("invalid IDLE event format: %s", data)
+	}
+	rest := strings.TrimLeft(str[spaceIdx+1:], " \t")
+	event := rest
+	if i := strings.IndexAny(rest, " \t"); i != -1 {
+		event = rest[:i]
+	}
+	event = strings.ToUpper(strings.TrimRight(event, "\r\n"))
+
 	switch event {
 	case IdleEventExists:
 		if handler.OnExists != nil {
-			go handler.OnExists(ExistsEvent{MessageIndex: index})
+			go handler.OnExists(ExistsEvent{SeqNum: MessageSeq(seqNum)})
 		}
 	case IdleEventExpunge:
 		if handler.OnExpunge != nil {
-			go handler.OnExpunge(ExpungeEvent{MessageIndex: index})
+			go handler.OnExpunge(ExpungeEvent{SeqNum: MessageSeq(seqNum)})
 		}
 	case IdleEventFetch:
 		if handler.OnFetch == nil {
 			return nil
 		}
-		str := string(data)
-		re := regexp.MustCompile(`(?i)^(\d+)\s+FETCH\s+\(([^)]*FLAGS\s*\(([^)]*)\)[^)]*)`)
-		matches := re.FindStringSubmatch(str)
-		if len(matches) == 4 {
-			messageIndex, _ := strconv.Atoi(matches[1])
-			uid, _ := strconv.Atoi(matches[2])
-			flags := strings.FieldsFunc(strings.ReplaceAll(matches[3], `\`, ""), func(r rune) bool {
-				return unicode.IsSpace(r) || r == ','
-			})
-			go handler.OnFetch(FetchEvent{MessageIndex: messageIndex, UID: uint32(uid), Flags: flags})
-		} else {
+		if !idleFetchHeadRE.MatchString(str) {
 			return fmt.Errorf("invalid FETCH event format: %s", data)
 		}
+		flagsMatch := idleFetchFlagsRE.FindStringSubmatch(str)
+		if len(flagsMatch) != 2 {
+			return fmt.Errorf("invalid FETCH event format: %s", data)
+		}
+		flags := strings.FieldsFunc(strings.ReplaceAll(flagsMatch[1], `\`, ""), func(r rune) bool {
+			return unicode.IsSpace(r) || r == ','
+		})
+		var uid UID
+		if m := idleFetchUIDRE.FindStringSubmatch(str); len(m) == 2 {
+			if u, perr := strconv.ParseUint(m[1], 10, 32); perr == nil {
+				uid = UID(u)
+			}
+		}
+		go handler.OnFetch(FetchEvent{SeqNum: MessageSeq(seqNum), UID: uid, Flags: flags})
 	}
 
 	return nil

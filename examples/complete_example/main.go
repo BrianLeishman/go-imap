@@ -42,7 +42,7 @@ func listAvailableFolders(m *imap.Client) error {
 	return nil
 }
 
-func fetchUnreadEmails(m *imap.Client) ([]int, error) {
+func fetchUnreadEmails(m *imap.Client) ([]imap.UID, error) {
 	fmt.Println("\nSelecting INBOX...")
 	if err := m.SelectFolder(ctx, "INBOX"); err != nil {
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
@@ -57,7 +57,7 @@ func fetchUnreadEmails(m *imap.Client) ([]int, error) {
 	return unreadUIDs, nil
 }
 
-func displayEmails(m *imap.Client, unreadUIDs []int) {
+func displayEmails(m *imap.Client, unreadUIDs []imap.UID) {
 	limit := 5
 	if len(unreadUIDs) < limit {
 		limit = len(unreadUIDs)
@@ -82,7 +82,7 @@ func displayEmails(m *imap.Client, unreadUIDs []int) {
 	}
 }
 
-func printEmailDetails(uid int, email *imap.Email) {
+func printEmailDetails(uid imap.UID, email *imap.Email) {
 	fmt.Printf("\n--- Email UID %d ---\n", uid)
 	fmt.Printf("From: %s\n", email.From)
 	fmt.Printf("Subject: %s\n", email.Subject)
@@ -103,7 +103,7 @@ func printEmailDetails(uid int, email *imap.Email) {
 	}
 }
 
-func markFirstAsRead(m *imap.Client, uid int) {
+func markFirstAsRead(m *imap.Client, uid imap.UID) {
 	fmt.Printf("\nMarking email %d as read...\n", uid)
 	if err := m.MarkSeen(ctx, uid); err != nil {
 		fmt.Printf("Failed to mark as read: %v\n", err)
@@ -126,7 +126,7 @@ func monitorBriefly(m *imap.Client) {
 	fmt.Println("\nMonitoring for new emails (10 seconds)...")
 	handler := &imap.IdleHandler{
 		OnExists: func(e imap.ExistsEvent) {
-			fmt.Printf("  New email arrived! (message #%d)\n", e.MessageIndex)
+			fmt.Printf("  New email arrived! (message #%d)\n", e.SeqNum)
 		},
 	}
 

@@ -12,7 +12,7 @@ import (
 type FolderStats struct {
 	Name   string
 	Count  int
-	MaxUID int
+	MaxUID UID
 	Error  error
 }
 
