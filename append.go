@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/xid"
@@ -47,6 +48,14 @@ func (d *Client) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 // two-phase literal transfer. A partial send cannot be safely retried without
 // risking duplicate messages.
 //
+// Context semantics: ctx bounds phases 1–3 (sending the command, waiting for
+// the continuation, and streaming the literal). Once the literal has been
+// fully transmitted, the server may commit the message at any moment, so the
+// final tagged-response wait ignores ctx cancellation in favor of a short
+// cleanup deadline. This means a caller that cancels ctx after the literal
+// is on the wire can still block briefly while the outcome is observed —
+// returning early would risk duplicate mail on retry.
+//
 // Example:
 //
 //	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
@@ -70,7 +79,9 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	stop := d.watchCtxCancel(ctx)
+	var stopOnce sync.Once
+	rawStop := d.watchCtxCancel(ctx)
+	stop := func() { stopOnce.Do(rawStop) }
 	defer func() {
 		stop()
 		_ = d.conn.SetDeadline(time.Time{})
@@ -132,19 +143,20 @@ func (d *Client) Append(ctx context.Context, folder string, flags []string, date
 		return fmt.Errorf("imap append write crlf: %w", wrapCtxErr(ctx, err))
 	}
 
-	// Phase 4: Read the tagged response. If ctx was cancelled mid-flight
-	// the watchdog has poisoned the deadline and waitForTaggedOK will
-	// return a timeout error; close the socket so the next caller doesn't
-	// consume a tagged completion the server may still emit. Once the
-	// tagged OK has been read the APPEND is committed server-side, so we
-	// must report success even if ctx was cancelled in the meantime —
-	// otherwise a retrying caller would duplicate the message.
-	if err := d.waitForTaggedOK(r, tag); err != nil {
-		if cerr := ctx.Err(); cerr != nil {
-			_ = d.Close()
-			return cerr
-		}
-		return err
+	// Phase 4: Read the tagged response. Once the literal has been fully
+	// transmitted the server may commit the message at any moment, so
+	// returning ctx.Err() here risks duplicate mail if the caller retries.
+	// Detach cancellation and apply a bounded deadline so we can reliably
+	// observe OK/NO and report the authoritative outcome. The deadline is
+	// the shorter of the caller's CommandTimeout (when configured) and the
+	// default cleanup budget — this preserves the per-command-timeout
+	// contract while still capping how long we wait for a stalled server.
+	stop()
+	_ = d.conn.SetDeadline(time.Time{})
+	cleanupBudget := 30 * time.Second
+	if t := d.effectiveCommandTimeout(); t > 0 && t < cleanupBudget {
+		cleanupBudget = t
 	}
-	return nil
+	_ = d.conn.SetDeadline(time.Now().Add(cleanupBudget))
+	return d.waitForTaggedOK(r, tag)
 }

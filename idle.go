@@ -256,21 +256,43 @@ func (d *Client) startIdleSingle(ctx context.Context, handler *IdleHandler) erro
 	}
 }
 
-// StopIdle stops the current IDLE session.
+// StopIdle stops the current IDLE session. Safe to call from multiple
+// goroutines; only the first caller that observes StateIdling performs the
+// DONE handshake, subsequent callers return an error without racing on the
+// shared idle channels.
 func (d *Client) StopIdle() error {
-	if d.State() != StateIdling {
+	if !d.casState(StateIdling, StateStoppingIdle) {
 		return fmt.Errorf("not in IDLE state")
 	}
+	idleDone := d.idleDone
+	idleStop := d.idleStop
 
 	debugLog(d.ConnNum, d.Folder, "sending DONE to exit IDLE")
 	if _, err := d.conn.Write([]byte("DONE\r\n")); err != nil {
+		// DONE write failed — connection is likely broken. Force-close so
+		// the Exec goroutine exits, then clean up the idle channels and
+		// drop state to Disconnected so the client isn't wedged in
+		// StateStoppingIdle.
+		_ = d.Close()
+		<-idleStop
+		d.idleDone, d.idleStop = nil, nil
+		d.setState(StateDisconnected)
 		return fmt.Errorf("failed to send DONE: %v", err)
 	}
 
-	d.setState(StateStoppingIdle)
-	close(d.idleDone)
+	close(idleDone)
 
-	<-d.idleStop
+	// Bound the wait so a stalled server can't hang the caller. 5 s is
+	// generous for a well-behaved server to reply to DONE; beyond that the
+	// server is either dead or malicious, so force-close the socket to
+	// unblock the Exec goroutine and move on.
+	select {
+	case <-idleStop:
+	case <-time.After(5 * time.Second):
+		_ = d.Close()
+		<-idleStop
+	}
+
 	d.idleDone, d.idleStop = nil, nil
 	if d.State() == StateStoppingIdle {
 		d.setState(StateSelected)
@@ -284,6 +306,19 @@ func (d *Client) setState(s State) {
 	d.stateMu.Lock()
 	defer d.stateMu.Unlock()
 	d.state = s
+}
+
+// casState atomically transitions state from `from` to `to`, returning true
+// if the swap was performed. Concurrent callers observing the same source
+// state cannot both succeed.
+func (d *Client) casState(from, to State) bool {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	if d.state != from {
+		return false
+	}
+	d.state = to
+	return true
 }
 
 // State returns the current connection state with proper locking.

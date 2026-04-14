@@ -31,6 +31,7 @@ type Client struct {
 	stateMu   sync.Mutex
 	idleStop  chan struct{}
 	idleDone  chan struct{}
+	closeMu   sync.Mutex
 	// auth is retained so Reconnect can re-authenticate using the same
 	// method and credentials the caller originally supplied.
 	auth Authenticator
@@ -310,8 +311,11 @@ func (d *Client) Clone(ctx context.Context) (*Client, error) {
 	return d2, nil
 }
 
-// Close closes the IMAP connection.
+// Close closes the IMAP connection. Safe to call concurrently and multiple
+// times; subsequent calls after the first successful close are no-ops.
 func (d *Client) Close() (err error) {
+	d.closeMu.Lock()
+	defer d.closeMu.Unlock()
 	if d.Connected {
 		debugLog(d.ConnNum, d.Folder, "closing connection")
 		err = d.conn.Close()

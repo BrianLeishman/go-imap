@@ -31,6 +31,11 @@ type mockIMAPServer struct {
 	responses      map[string]string
 	failCommands   map[string]bool // commands that should return NO (keyed by uppercase command name)
 	tlsConfig      *tls.Config
+	// handler, if set, is invoked before the default command switch.
+	// Return true to indicate the command was handled (and the default
+	// switch should be skipped). The handler must write both any untagged
+	// responses and the tagged completion (with Flush).
+	handler func(tag, line string, r *bufio.Reader, w *bufio.Writer) bool
 }
 
 func newMockIMAPServer(validUser, validPass string) (*mockIMAPServer, error) {
@@ -101,6 +106,13 @@ func (s *mockIMAPServer) handleConnection(conn net.Conn) {
 
 		tag := parts[0]
 		command := strings.ToUpper(parts[1])
+
+		if s.handler != nil {
+			if s.handler(tag, line, reader, writer) {
+				writer.Flush()
+				continue
+			}
+		}
 
 		switch command {
 		case "LOGIN":

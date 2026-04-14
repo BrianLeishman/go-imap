@@ -14,6 +14,35 @@ import (
 	"github.com/rs/xid"
 )
 
+// sanitizeCommand redacts credential material from a command line before it
+// is logged. It strips the argument list after AUTHENTICATE <mech> (which
+// carries the raw XOAUTH2 token or SASL payload) and replaces any occurrence
+// of the stored secret — whether quoted or bare — with "****".
+func sanitizeCommand(command, secret string) string {
+	// Redact AUTHENTICATE payloads (e.g., the base64 XOAUTH2 blob which is
+	// sent unquoted and is not caught by substring replacement).
+	if idx := strings.Index(strings.ToUpper(command), "AUTHENTICATE "); idx >= 0 {
+		mechStart := idx + len("AUTHENTICATE ")
+		if space := strings.IndexByte(command[mechStart:], ' '); space >= 0 {
+			return command[:mechStart+space+1] + "****"
+		}
+	}
+	if secret == "" {
+		return command
+	}
+	// Replace the secret in quoted, escaped-quoted, and bare forms. LOGIN
+	// applies addSlashes to username/password before sending, so a secret
+	// containing a quote appears on the wire (and in the log buffer) as
+	// \"; match both shapes so the redaction isn't bypassed.
+	escaped := addSlashes.Replace(secret)
+	out := strings.ReplaceAll(command, `"`+escaped+`"`, `"****"`)
+	if escaped != secret {
+		out = strings.ReplaceAll(out, escaped, "****")
+	}
+	out = strings.ReplaceAll(out, `"`+secret+`"`, `"****"`)
+	return strings.ReplaceAll(out, secret, "****")
+}
+
 // readLiterals reads IMAP literal continuations appended to a response line.
 // It repeatedly checks for {NNN} or {NNN+} patterns at the end of the line,
 // reads the literal data, and appends it.
@@ -112,8 +141,7 @@ func (d *Client) execOnce(ctx context.Context, command string, buildResponse boo
 	c := fmt.Sprintf("%s %s\r\n", tag, command)
 
 	if Verbose {
-		sanitized := strings.ReplaceAll(strings.TrimSpace(c), fmt.Sprintf(`"%s"`, d.password), `"****"`)
-		debugLog(d.ConnNum, d.Folder, "sending command", "command", sanitized)
+		debugLog(d.ConnNum, d.Folder, "sending command", "command", sanitizeCommand(strings.TrimSpace(c), d.password))
 	}
 
 	if _, err := d.conn.Write([]byte(c)); err != nil {
