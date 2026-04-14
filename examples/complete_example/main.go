@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -8,24 +9,30 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func initializeClient() (*imap.Dialer, error) {
+var ctx = context.Background()
+
+func initializeClient() (*imap.Client, error) {
 	imap.Verbose = false
-	imap.RetryCount = 3
-	imap.DialTimeout = 10 * time.Second
-	imap.CommandTimeout = 30 * time.Second
 
 	fmt.Println("Connecting to IMAP server...")
 	// NOTE: Replace with your actual credentials and server
-	m, err := imap.New("your-email@gmail.com", "your-password", "imap.gmail.com", 993)
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host:           "imap.gmail.com",
+		Port:           993,
+		Auth:           imap.PasswordAuth{Username: "your-email@gmail.com", Password: "your-password"},
+		DialTimeout:    10 * time.Second,
+		CommandTimeout: 30 * time.Second,
+		RetryCount:     3,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 	return m, nil
 }
 
-func listAvailableFolders(m *imap.Dialer) error {
+func listAvailableFolders(m *imap.Client) error {
 	fmt.Println("\nAvailable folders:")
-	folders, err := m.GetFolders()
+	folders, err := m.GetFolders(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get folders: %w", err)
 	}
@@ -35,14 +42,14 @@ func listAvailableFolders(m *imap.Dialer) error {
 	return nil
 }
 
-func fetchUnreadEmails(m *imap.Dialer) ([]int, error) {
+func fetchUnreadEmails(m *imap.Client) ([]imap.UID, error) {
 	fmt.Println("\nSelecting INBOX...")
-	if err := m.SelectFolder("INBOX"); err != nil {
+	if err := m.SelectFolder(ctx, "INBOX"); err != nil {
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
 
 	fmt.Println("\nSearching for unread emails...")
-	unreadUIDs, err := m.GetUIDs("UNSEEN")
+	unreadUIDs, err := m.GetUIDs(ctx, "UNSEEN")
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
@@ -50,7 +57,7 @@ func fetchUnreadEmails(m *imap.Dialer) ([]int, error) {
 	return unreadUIDs, nil
 }
 
-func displayEmails(m *imap.Dialer, unreadUIDs []int) {
+func displayEmails(m *imap.Client, unreadUIDs []imap.UID) {
 	limit := 5
 	if len(unreadUIDs) < limit {
 		limit = len(unreadUIDs)
@@ -61,7 +68,7 @@ func displayEmails(m *imap.Dialer, unreadUIDs []int) {
 	}
 
 	fmt.Printf("\nFetching first %d unread emails...\n", limit)
-	emails, err := m.GetEmails(unreadUIDs[:limit]...)
+	emails, err := m.GetEmails(ctx, unreadUIDs[:limit]...)
 	if err != nil {
 		log.Fatalf("Failed to fetch emails: %v", err)
 	}
@@ -75,7 +82,7 @@ func displayEmails(m *imap.Dialer, unreadUIDs []int) {
 	}
 }
 
-func printEmailDetails(uid int, email *imap.Email) {
+func printEmailDetails(uid imap.UID, email *imap.Email) {
 	fmt.Printf("\n--- Email UID %d ---\n", uid)
 	fmt.Printf("From: %s\n", email.From)
 	fmt.Printf("Subject: %s\n", email.Subject)
@@ -96,18 +103,18 @@ func printEmailDetails(uid int, email *imap.Email) {
 	}
 }
 
-func markFirstAsRead(m *imap.Dialer, uid int) {
+func markFirstAsRead(m *imap.Client, uid imap.UID) {
 	fmt.Printf("\nMarking email %d as read...\n", uid)
-	if err := m.MarkSeen(uid); err != nil {
+	if err := m.MarkSeen(ctx, uid); err != nil {
 		fmt.Printf("Failed to mark as read: %v\n", err)
 	}
 }
 
-func printMailboxStats(m *imap.Dialer) {
+func printMailboxStats(m *imap.Client) {
 	fmt.Println("\nMailbox Statistics:")
-	allUIDs, _ := m.GetUIDs("ALL")
-	seenUIDs, _ := m.GetUIDs("SEEN")
-	flaggedUIDs, _ := m.GetUIDs("FLAGGED")
+	allUIDs, _ := m.GetUIDs(ctx, "ALL")
+	seenUIDs, _ := m.GetUIDs(ctx, "SEEN")
+	flaggedUIDs, _ := m.GetUIDs(ctx, "FLAGGED")
 
 	fmt.Printf("  Total emails: %d\n", len(allUIDs))
 	fmt.Printf("  Read emails: %d\n", len(seenUIDs))
@@ -115,15 +122,15 @@ func printMailboxStats(m *imap.Dialer) {
 	fmt.Printf("  Flagged emails: %d\n", len(flaggedUIDs))
 }
 
-func monitorBriefly(m *imap.Dialer) {
+func monitorBriefly(m *imap.Client) {
 	fmt.Println("\nMonitoring for new emails (10 seconds)...")
 	handler := &imap.IdleHandler{
 		OnExists: func(e imap.ExistsEvent) {
-			fmt.Printf("  New email arrived! (message #%d)\n", e.MessageIndex)
+			fmt.Printf("  New email arrived! (message #%d)\n", e.SeqNum)
 		},
 	}
 
-	if err := m.StartIdle(handler); err == nil {
+	if err := m.StartIdle(ctx, handler); err == nil {
 		time.Sleep(10 * time.Second)
 		_ = m.StopIdle()
 	}

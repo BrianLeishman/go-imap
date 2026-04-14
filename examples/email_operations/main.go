@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -8,21 +9,27 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func connectAndLogin() (*imap.Dialer, error) {
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+var ctx = context.Background()
+
+func connectAndLogin() (*imap.Client, error) {
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	return m, nil
 }
 
-func getFirstUIDs(m *imap.Dialer) ([]int, error) {
-	err := m.SelectFolder("INBOX")
+func getFirstUIDs(m *imap.Client) ([]imap.UID, error) {
+	err := m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
 
-	uids, err := m.GetUIDs("1:3") // Get first 3 emails
+	uids, err := m.GetUIDs(ctx, "1:3") // Get first 3 emails
 	if err != nil {
 		return nil, fmt.Errorf("failed to get UIDs: %w", err)
 	}
@@ -30,8 +37,8 @@ func getFirstUIDs(m *imap.Dialer) ([]int, error) {
 	return uids, nil
 }
 
-func findArchiveFolder(m *imap.Dialer) bool {
-	folders, err := m.GetFolders()
+func findArchiveFolder(m *imap.Client) bool {
+	folders, err := m.GetFolders(ctx)
 	if err != nil {
 		log.Printf("Failed to get folders: %v", err)
 		return false
@@ -45,7 +52,7 @@ func findArchiveFolder(m *imap.Dialer) bool {
 	return false
 }
 
-func demonstrateMoveEmail(m *imap.Dialer, uid int, archiveExists bool) {
+func demonstrateMoveEmail(m *imap.Client, uid imap.UID, archiveExists bool) {
 	fmt.Println("=== Moving Emails ===")
 
 	if !archiveExists {
@@ -53,7 +60,7 @@ func demonstrateMoveEmail(m *imap.Dialer, uid int, archiveExists bool) {
 		return
 	}
 
-	err := m.MoveEmail(uid, "INBOX/Archive")
+	err := m.MoveEmail(ctx, uid, "INBOX/Archive")
 	if err != nil {
 		log.Printf("Failed to move email: %v", err)
 		return
@@ -61,17 +68,17 @@ func demonstrateMoveEmail(m *imap.Dialer, uid int, archiveExists bool) {
 	fmt.Printf("Moved email UID %d to Archive\n", uid)
 
 	// Move it back for further demos
-	if err := m.SelectFolder("INBOX/Archive"); err != nil {
+	if err := m.SelectFolder(ctx, "INBOX/Archive"); err != nil {
 		log.Printf("Failed to select Archive folder: %v", err)
-	} else if err := m.MoveEmail(uid, "INBOX"); err != nil {
+	} else if err := m.MoveEmail(ctx, uid, "INBOX"); err != nil {
 		log.Printf("Failed to move email back: %v", err)
-	} else if err := m.SelectFolder("INBOX"); err != nil {
+	} else if err := m.SelectFolder(ctx, "INBOX"); err != nil {
 		log.Printf("Failed to select INBOX: %v", err)
 	}
 	fmt.Printf("Moved email back to INBOX for demo\n")
 }
 
-func demonstrateCopyEmail(m *imap.Dialer, uid int, archiveExists bool) {
+func demonstrateCopyEmail(m *imap.Client, uid imap.UID, archiveExists bool) {
 	fmt.Println("\n=== Copying Emails ===")
 
 	if !archiveExists {
@@ -79,7 +86,7 @@ func demonstrateCopyEmail(m *imap.Dialer, uid int, archiveExists bool) {
 		return
 	}
 
-	err := m.CopyEmail(uid, "INBOX/Archive")
+	err := m.CopyEmail(ctx, uid, "INBOX/Archive")
 	if err != nil {
 		log.Printf("Failed to copy email: %v", err)
 	} else {
@@ -87,11 +94,11 @@ func demonstrateCopyEmail(m *imap.Dialer, uid int, archiveExists bool) {
 	}
 }
 
-func demonstrateAppend(m *imap.Dialer) {
+func demonstrateAppend(m *imap.Client) {
 	fmt.Println("\n=== Appending Messages (Upload) ===")
 
 	msg := []byte("From: me@example.com\r\nTo: you@example.com\r\nSubject: Test Draft\r\n\r\nThis is a test message uploaded via APPEND.")
-	err := m.Append("Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
+	err := m.Append(ctx, "Drafts", []string{`\Draft`, `\Seen`}, time.Now(), msg)
 	if err != nil {
 		log.Printf("Failed to append message: %v", err)
 		fmt.Println("(Note: Append requires a valid target folder)")
@@ -100,10 +107,10 @@ func demonstrateAppend(m *imap.Dialer) {
 	}
 }
 
-func demonstrateIndividualFlags(m *imap.Dialer, uid int) {
+func demonstrateIndividualFlags(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Setting Individual Flags ===")
 
-	err := m.MarkSeen(uid)
+	err := m.MarkSeen(ctx, uid)
 	if err != nil {
 		log.Printf("Failed to mark as seen: %v", err)
 	} else {
@@ -113,7 +120,7 @@ func demonstrateIndividualFlags(m *imap.Dialer, uid int) {
 	flags := imap.Flags{
 		Seen: imap.FlagRemove,
 	}
-	err = m.SetFlags(uid, flags)
+	err = m.SetFlags(ctx, uid, flags)
 	if err != nil {
 		log.Printf("Failed to mark as unread: %v", err)
 	} else {
@@ -121,7 +128,7 @@ func demonstrateIndividualFlags(m *imap.Dialer, uid int) {
 	}
 }
 
-func demonstrateMultipleFlags(m *imap.Dialer, uid int) {
+func demonstrateMultipleFlags(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Setting Multiple Flags ===")
 
 	flags := imap.Flags{
@@ -129,7 +136,7 @@ func demonstrateMultipleFlags(m *imap.Dialer, uid int) {
 		Flagged:  imap.FlagAdd,    // Star/flag the email
 		Answered: imap.FlagRemove, // Remove answered flag
 	}
-	err := m.SetFlags(uid, flags)
+	err := m.SetFlags(ctx, uid, flags)
 	if err != nil {
 		log.Printf("Failed to set flags: %v", err)
 	} else {
@@ -140,13 +147,13 @@ func demonstrateMultipleFlags(m *imap.Dialer, uid int) {
 	}
 
 	// Check the flags
-	overviews, err := m.GetOverviews(uid)
+	overviews, err := m.GetOverviews(ctx, uid)
 	if err == nil && len(overviews) > 0 {
 		fmt.Printf("Current flags on UID %d: %v\n", uid, overviews[uid].Flags)
 	}
 }
 
-func demonstrateCustomKeywords(m *imap.Dialer, uid int) {
+func demonstrateCustomKeywords(m *imap.Client, uid imap.UID) {
 	fmt.Println("\n=== Custom Keywords ===")
 
 	flags := imap.Flags{
@@ -157,7 +164,7 @@ func demonstrateCustomKeywords(m *imap.Dialer, uid int) {
 			"$FollowUp":  true,  // Add this
 		},
 	}
-	err := m.SetFlags(uid, flags)
+	err := m.SetFlags(ctx, uid, flags)
 	if err != nil {
 		log.Printf("Failed to set custom keywords: %v", err)
 		fmt.Println("(Note: Not all servers support custom keywords)")
@@ -168,7 +175,7 @@ func demonstrateCustomKeywords(m *imap.Dialer, uid int) {
 	}
 }
 
-func demonstrateBatchFlags(m *imap.Dialer, uids []int) {
+func demonstrateBatchFlags(m *imap.Client, uids []imap.UID) {
 	fmt.Println("\n=== Batch Flag Operations ===")
 
 	if len(uids) <= 1 {
@@ -177,7 +184,7 @@ func demonstrateBatchFlags(m *imap.Dialer, uids []int) {
 
 	// Mark multiple emails as read
 	for _, batchUID := range uids[:2] {
-		err := m.MarkSeen(batchUID)
+		err := m.MarkSeen(ctx, batchUID)
 		if err != nil {
 			log.Printf("Failed to mark UID %d as seen: %v", batchUID, err)
 		} else {
@@ -190,7 +197,7 @@ func demonstrateBatchFlags(m *imap.Dialer, uids []int) {
 		flags := imap.Flags{
 			Flagged: imap.FlagAdd,
 		}
-		err := m.SetFlags(batchUID, flags)
+		err := m.SetFlags(ctx, batchUID, flags)
 		if err != nil {
 			log.Printf("Failed to flag UID %d: %v", batchUID, err)
 		} else {
@@ -204,14 +211,14 @@ func printFlagReference() {
 
 	/*
 		// Get an email to delete (maybe from Trash or a test folder)
-		err = m.SelectFolder("Trash")
+		err = m.SelectFolder(ctx, "Trash")
 		if err == nil {
-			trashUIDs, _ := m.GetUIDs("1")
+			trashUIDs, _ := m.GetUIDs(ctx, "1")
 			if len(trashUIDs) > 0 {
 				deleteUID := trashUIDs[0]
 
 				// Step 1: Mark as deleted (sets \Deleted flag)
-				err = m.DeleteEmail(deleteUID)
+				err = m.DeleteEmail(ctx, deleteUID)
 				if err != nil {
 					log.Printf("Failed to mark for deletion: %v", err)
 				} else {
@@ -219,7 +226,7 @@ func printFlagReference() {
 				}
 
 				// Step 2: Expunge to permanently remove all \Deleted emails
-				err = m.Expunge()
+				err = m.Expunge(ctx)
 				if err != nil {
 					log.Printf("Failed to expunge: %v", err)
 				} else {
@@ -230,7 +237,7 @@ func printFlagReference() {
 			}
 
 			// Go back to INBOX
-			m.SelectFolder("INBOX")
+			m.SelectFolder(ctx, "INBOX")
 		} else {
 			fmt.Println("Trash folder not found, skipping deletion demo")
 		}

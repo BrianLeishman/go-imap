@@ -9,8 +9,9 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
-	emails := make(map[int]*Email, len(records))
+
+func parseRecords(d *Dialer, records [][]*Token) (map[UID]*Email, error) {
+	emails := make(map[UID]*Email, len(records))
 	CharsetReader := func(label string, input io.Reader) (io.Reader, error) {
 		label = strings.Replace(label, "windows-", "cp", -1)
 		encoding, _ := charset.Lookup(label)
@@ -83,7 +84,11 @@ func parseRecords(d *Dialer, records [][]*Token) (map[int]*Email, error) {
 				if err := d.CheckType(tks[i+1], []TType{TNumber}, tks, "after UID"); err != nil {
 					return nil, err
 				}
-				e.UID = tks[i+1].Num
+				u, err := uidFromToken(tks[i+1].Num)
+				if err != nil {
+					return nil, err
+				}
+				e.UID = u
 				skip++
 			}
 		}
@@ -101,7 +106,7 @@ func TestGetLastNUIDs_EdgeCases(t *testing.T) {
 
 	t.Run("n=0 returns nil", func(t *testing.T) {
 		t.Parallel()
-		result, err := d.GetLastNUIDs(0)
+		result, err := d.GetLastNUIDs(ctx, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -112,7 +117,7 @@ func TestGetLastNUIDs_EdgeCases(t *testing.T) {
 
 	t.Run("n=-1 returns nil", func(t *testing.T) {
 		t.Parallel()
-		result, err := d.GetLastNUIDs(-1)
+		result, err := d.GetLastNUIDs(ctx, -1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -123,7 +128,7 @@ func TestGetLastNUIDs_EdgeCases(t *testing.T) {
 
 	t.Run("n=-100 returns nil", func(t *testing.T) {
 		t.Parallel()
-		result, err := d.GetLastNUIDs(-100)
+		result, err := d.GetLastNUIDs(ctx, -100)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

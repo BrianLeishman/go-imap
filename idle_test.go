@@ -19,8 +19,8 @@ func TestRunIdleEvent_Exists(t *testing.T) {
 	}
 	select {
 	case e := <-ch:
-		if e.MessageIndex != 5 {
-			t.Errorf("expected MessageIndex 5, got %d", e.MessageIndex)
+		if e.SeqNum != 5 {
+			t.Errorf("expected SeqNum 5, got %d", e.SeqNum)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for EXISTS event")
@@ -40,8 +40,8 @@ func TestRunIdleEvent_Expunge(t *testing.T) {
 	}
 	select {
 	case e := <-ch:
-		if e.MessageIndex != 3 {
-			t.Errorf("expected MessageIndex 3, got %d", e.MessageIndex)
+		if e.SeqNum != 3 {
+			t.Errorf("expected SeqNum 3, got %d", e.SeqNum)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for EXPUNGE event")
@@ -56,16 +56,42 @@ func TestRunIdleEvent_Fetch(t *testing.T) {
 		OnFetch: func(event FetchEvent) { ch <- event },
 	}
 
-	if err := d.runIdleEvent([]byte(`7 FETCH (FLAGS (\Seen \Flagged))`), handler); err != nil {
+	if err := d.runIdleEvent([]byte(`7 FETCH (UID 9876 FLAGS (\Seen \Flagged))`), handler); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	select {
 	case e := <-ch:
-		if e.MessageIndex != 7 {
-			t.Errorf("expected MessageIndex 7, got %d", e.MessageIndex)
+		if e.SeqNum != 7 {
+			t.Errorf("expected SeqNum 7, got %d", e.SeqNum)
+		}
+		if e.UID != 9876 {
+			t.Errorf("expected UID 9876, got %d", e.UID)
 		}
 		if len(e.Flags) == 0 {
 			t.Error("expected non-empty flags")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for FETCH event")
+	}
+}
+
+// TestRunIdleEvent_FetchUIDAfterFlags covers the FLAGS-then-UID order some
+// servers emit, ensuring the UID is parsed regardless of attribute order.
+func TestRunIdleEvent_FetchUIDAfterFlags(t *testing.T) {
+	t.Parallel()
+	d := &Dialer{}
+	ch := make(chan FetchEvent, 1)
+	handler := &IdleHandler{
+		OnFetch: func(event FetchEvent) { ch <- event },
+	}
+
+	if err := d.runIdleEvent([]byte(`7 FETCH (FLAGS (\Seen) UID 4242)`), handler); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case e := <-ch:
+		if e.UID != 4242 {
+			t.Errorf("expected UID 4242, got %d", e.UID)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for FETCH event")
@@ -155,11 +181,11 @@ func TestSetState_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
-		go func(state int) {
+		go func(s State) {
 			defer wg.Done()
-			d.setState(state % 6)
+			d.setState(s)
 			_ = d.State()
-		}(i)
+		}(State(i % 6))
 	}
 	wg.Wait()
 }

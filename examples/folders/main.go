@@ -1,22 +1,29 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func connectToServer() (*imap.Dialer, error) {
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+var ctx = context.Background()
+
+func connectToServer() (*imap.Client, error) {
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	return m, nil
 }
 
-func listFolders(m *imap.Dialer) error {
-	folders, err := m.GetFolders()
+func listFolders(m *imap.Client) error {
+	folders, err := m.GetFolders(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get folders: %w", err)
 	}
@@ -28,31 +35,31 @@ func listFolders(m *imap.Dialer) error {
 	return nil
 }
 
-func demonstrateFolderSelection(m *imap.Dialer) error {
+func demonstrateFolderSelection(m *imap.Client) error {
 	fmt.Println("\n--- Folder Operations ---")
 
 	// Select a folder for operations (read-write mode)
-	err := m.SelectFolder("INBOX")
+	err := m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		return fmt.Errorf("failed to select INBOX: %w", err)
 	}
 	fmt.Println("Selected INBOX in read-write mode")
 
 	// Get message count in current folder
-	allUIDs, err := m.GetUIDs("ALL")
+	allUIDs, err := m.GetUIDs(ctx, "ALL")
 	if err != nil {
 		return fmt.Errorf("failed to get message count: %w", err)
 	}
 	fmt.Printf("INBOX contains %d messages\n", len(allUIDs))
 
 	// Select folder in read-only mode
-	err = m.ExamineFolder("Sent")
+	err = m.ExamineFolder(ctx, "Sent")
 	if err != nil {
 		return fmt.Errorf("failed to examine Sent folder: %w", err)
 	}
 	fmt.Println("\nExamined Sent folder in read-only mode")
 
-	sentUIDs, err := m.GetUIDs("ALL")
+	sentUIDs, err := m.GetUIDs(ctx, "ALL")
 	if err != nil {
 		return fmt.Errorf("failed to get sent message count: %w", err)
 	}
@@ -61,11 +68,11 @@ func demonstrateFolderSelection(m *imap.Dialer) error {
 	return nil
 }
 
-func demonstrateFolderManagement(m *imap.Dialer) {
+func demonstrateFolderManagement(m *imap.Client) {
 	fmt.Println("\n--- Folder Management ---")
 
 	// Create a new folder
-	err := m.CreateFolder("INBOX/TestFolder")
+	err := m.CreateFolder(ctx, "INBOX/TestFolder")
 	if err != nil {
 		log.Printf("Failed to create folder: %v", err)
 	} else {
@@ -73,7 +80,7 @@ func demonstrateFolderManagement(m *imap.Dialer) {
 	}
 
 	// Rename the folder
-	err = m.RenameFolder("INBOX/TestFolder", "INBOX/RenamedFolder")
+	err = m.RenameFolder(ctx, "INBOX/TestFolder", "INBOX/RenamedFolder")
 	if err != nil {
 		log.Printf("Failed to rename folder: %v", err)
 	} else {
@@ -81,7 +88,7 @@ func demonstrateFolderManagement(m *imap.Dialer) {
 	}
 
 	// Delete the folder
-	err = m.DeleteFolder("INBOX/RenamedFolder")
+	err = m.DeleteFolder(ctx, "INBOX/RenamedFolder")
 	if err != nil {
 		log.Printf("Failed to delete folder: %v", err)
 	} else {
@@ -89,24 +96,17 @@ func demonstrateFolderManagement(m *imap.Dialer) {
 	}
 }
 
-func demonstrateEmailCounts(m *imap.Dialer) error {
+func demonstrateEmailCounts(m *imap.Client) error {
 	fmt.Println("\n--- Email Counts ---")
 
-	// Get total email count across all folders (traditional approach)
-	totalCount, err := m.GetTotalEmailCount()
+	// Total email count across all folders. Per-folder failures are reported
+	// in folderErrors so that one inaccessible folder (common with Gmail
+	// system folders) does not abort the entire count.
+	totalCount, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{})
 	if err != nil {
-		fmt.Printf("Traditional count failed: %v\n", err)
-		fmt.Println("This might happen with Gmail or other providers that have inaccessible system folders")
-	} else {
-		fmt.Printf("Total emails in all folders: %d\n", totalCount)
+		return fmt.Errorf("failed to get total email count: %w", err)
 	}
-
-	// Get total email count with robust error handling
-	safeCount, folderErrors, err := m.GetTotalEmailCountSafe()
-	if err != nil {
-		return fmt.Errorf("failed to get safe total email count: %w", err)
-	}
-	fmt.Printf("Total emails (safe count): %d\n", safeCount)
+	fmt.Printf("Total emails in all folders: %d\n", totalCount)
 
 	if len(folderErrors) > 0 {
 		fmt.Printf("Note: %d folders had errors:\n", len(folderErrors))
@@ -115,9 +115,10 @@ func demonstrateEmailCounts(m *imap.Dialer) error {
 		}
 	}
 
-	// Get count excluding certain folders (safe version)
-	excludedFolders := []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"}
-	count, folderErrors, err := m.GetTotalEmailCountSafeExcluding(excludedFolders)
+	// Count excluding certain folders.
+	count, folderErrors, err := m.TotalEmailCount(ctx, imap.CountOptions{
+		ExcludeFolders: []string{"Trash", "[Gmail]/Spam", "Junk", "Deleted"},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to get filtered email count: %w", err)
 	}
@@ -127,19 +128,18 @@ func demonstrateEmailCounts(m *imap.Dialer) error {
 		fmt.Printf("Folders with errors during exclusion count: %d\n", len(folderErrors))
 	}
 
-	// Calculate percentage
-	if safeCount > 0 {
-		percentage := float64(count) / float64(safeCount) * 100
+	if totalCount > 0 {
+		percentage := float64(count) / float64(totalCount) * 100
 		fmt.Printf("That's %.1f%% of your total emails\n", percentage)
 	}
 
 	return nil
 }
 
-func demonstrateFolderStats(m *imap.Dialer) error {
+func demonstrateFolderStats(m *imap.Client) error {
 	fmt.Println("\n--- Detailed Folder Statistics ---")
 
-	stats, err := m.GetFolderStats()
+	stats, err := m.FolderStats(ctx, imap.CountOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get folder statistics: %w", err)
 	}

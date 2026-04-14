@@ -1,13 +1,14 @@
 package imap
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"sync"
-
-	retry "github.com/StirlingMarketingGroup/go-retry"
+	"time"
 )
 
 var (
@@ -15,245 +16,356 @@ var (
 	nextConnNumMutex = sync.RWMutex{}
 )
 
-// Dialer represents an IMAP connection
-type Dialer struct {
+// Client represents an IMAP connection.
+type Client struct {
 	conn      *tls.Conn
 	Folder    string
 	ReadOnly  bool
 	Username  string
-	Password  string
+	password  string
 	Host      string
 	Port      int
 	Connected bool
 	ConnNum   int
-	state     int
+	state     State
 	stateMu   sync.Mutex
 	idleStop  chan struct{}
 	idleDone  chan struct{}
-	// useXOAUTH2 indicates whether XOAUTH2 authentication should be used
-	// on (re)connection instead of LOGIN. It is set by NewWithOAuth2.
-	useXOAUTH2 bool
+	closeMu   sync.Mutex
+	// auth is retained so Reconnect can re-authenticate using the same
+	// method and credentials the caller originally supplied.
+	auth Authenticator
+	// opts is the original Dial options (minus Auth, which lives in auth).
+	// Retained so Reconnect and Clone can reuse custom TLSConfig, Dialer,
+	// timeouts, and retry settings.
+	opts Options
 }
 
-// dialHost establishes a TLS connection to the IMAP server
-func dialHost(host string, port int) (*tls.Conn, error) {
-	dialer := &net.Dialer{Timeout: DialTimeout}
-	var cfg *tls.Config
-	if TLSSkipVerify {
-		cfg = &tls.Config{InsecureSkipVerify: true}
+// credsFromAuth extracts a (username, secret) pair from a known
+// Authenticator for log sanitization. Unknown types yield empty strings.
+func credsFromAuth(a Authenticator) (string, string) {
+	switch v := a.(type) {
+	case PasswordAuth:
+		return v.Username, v.Password
+	case *PasswordAuth:
+		if v != nil {
+			return v.Username, v.Password
+		}
+	case XOAuth2:
+		return v.Username, v.AccessToken
+	case *XOAuth2:
+		if v != nil {
+			return v.Username, v.AccessToken
+		}
 	}
-	return tls.DialWithDialer(dialer, "tcp", host+":"+strconv.Itoa(port), cfg)
+	return "", ""
 }
 
-// NewWithOAuth2 creates a new IMAP connection using OAuth2 authentication
-func NewWithOAuth2(username string, accessToken string, host string, port int) (d *Dialer, err error) {
-	nextConnNumMutex.RLock()
-	connNum := nextConnNum
-	nextConnNumMutex.RUnlock()
-
-	nextConnNumMutex.Lock()
-	nextConnNum++
-	nextConnNumMutex.Unlock()
-
-	// Retry only the connection establishment, not authentication
-	err = retry.Retry(func() error {
-		if Verbose {
-			debugLog(connNum, "", "establishing connection", "host", host, "port", port, "auth", "xoauth2")
-		}
-		var conn *tls.Conn
-		conn, err = dialHost(host, port)
-		if err != nil {
-			if Verbose {
-				debugLog(connNum, "", "connection attempt failed", "error", err)
-			}
-			return err
-		}
-		d = &Dialer{
-			conn:       conn,
-			Username:   username,
-			Password:   accessToken,
-			Host:       host,
-			Port:       port,
-			Connected:  true,
-			ConnNum:    connNum,
-			useXOAUTH2: true,
-		}
-		return nil
-	}, RetryCount, func(err error) error {
-		if Verbose {
-			debugLog(connNum, "", "connection retry scheduled")
-			if d != nil && d.conn != nil {
-				_ = d.conn.Close()
-			}
-		}
-		return nil
-	}, func() error {
-		if Verbose {
-			debugLog(connNum, "", "retrying connection")
-		}
-		return nil
-	})
-	if err != nil {
-		warnLog(connNum, "", "failed to establish connection", "error", err)
-		if d != nil && d.conn != nil {
-			_ = d.conn.Close()
-		}
-		return nil, err
+// effectiveRetryCount returns the retry count for this client. A positive
+// Options.RetryCount is used as-is. A negative value explicitly disables
+// retries for this client, regardless of the package-level RetryCount. A
+// zero value falls back to the package-level RetryCount.
+func (d *Client) effectiveRetryCount() int {
+	switch {
+	case d.opts.RetryCount > 0:
+		return d.opts.RetryCount
+	case d.opts.RetryCount < 0:
+		return 0
+	default:
+		return RetryCount
 	}
-
-	// Authenticate after connection is established - no retry for auth failures
-	err = d.Authenticate(username, accessToken)
-	if err != nil {
-		errorLog(connNum, "", "authentication failed", "error", err)
-		_ = d.Close()
-		return nil, err
-	}
-
-	return d, nil
 }
 
-// New creates a new IMAP connection using username/password authentication
-func New(username string, password string, host string, port int) (d *Dialer, err error) {
-	nextConnNumMutex.RLock()
-	connNum := nextConnNum
-	nextConnNumMutex.RUnlock()
-
-	nextConnNumMutex.Lock()
-	nextConnNum++
-	nextConnNumMutex.Unlock()
-
-	// Retry only the connection establishment, not authentication
-	err = retry.Retry(func() error {
-		if Verbose {
-			debugLog(connNum, "", "establishing connection", "host", host, "port", port, "auth", "login")
-		}
-		var conn *tls.Conn
-		conn, err = dialHost(host, port)
-		if err != nil {
-			if Verbose {
-				debugLog(connNum, "", "connection attempt failed", "error", err)
-			}
-			return err
-		}
-		d = &Dialer{
-			conn:       conn,
-			Username:   username,
-			Password:   password,
-			Host:       host,
-			Port:       port,
-			Connected:  true,
-			ConnNum:    connNum,
-			useXOAUTH2: false,
-		}
-		return nil
-	}, RetryCount, func(err error) error {
-		if Verbose {
-			debugLog(connNum, "", "connection retry scheduled")
-			if d != nil && d.conn != nil {
-				_ = d.conn.Close()
-			}
-		}
-		return nil
-	}, func() error {
-		if Verbose {
-			debugLog(connNum, "", "retrying connection")
-		}
-		return nil
-	})
-	if err != nil {
-		warnLog(connNum, "", "failed to establish connection", "error", err)
-		if d != nil && d.conn != nil {
-			_ = d.conn.Close()
-		}
-		return nil, err
+// effectiveCommandTimeout returns the per-command deadline for this client.
+// A positive Options.CommandTimeout is used as-is. A negative value
+// explicitly disables the deadline for this client, regardless of the
+// package-level CommandTimeout. A zero value falls back to the package-level
+// CommandTimeout.
+func (d *Client) effectiveCommandTimeout() time.Duration {
+	switch {
+	case d.opts.CommandTimeout > 0:
+		return d.opts.CommandTimeout
+	case d.opts.CommandTimeout < 0:
+		return 0
+	default:
+		return CommandTimeout
 	}
-
-	// Authenticate after connection is established - no retry for auth failures
-	err = d.Login(username, password)
-	if err != nil {
-		errorLog(connNum, "", "authentication failed", "error", err)
-		_ = d.Close()
-		return nil, err
-	}
-
-	return d, nil
 }
 
-// Clone creates a copy of the dialer with the same configuration
-func (d *Dialer) Clone() (d2 *Dialer, err error) {
-	if d.useXOAUTH2 {
-		d2, err = NewWithOAuth2(d.Username, d.Password, d.Host, d.Port)
+// SetAuth replaces the client's authenticator. Use this to rotate
+// credentials or refresh an OAuth2 access token on a long-lived client;
+// subsequent Reconnect and Clone calls will use the new authenticator.
+// SetAuth does not itself re-authenticate the open connection.
+func (d *Client) SetAuth(a Authenticator) {
+	d.auth = a
+	// Update stored opts so Clone re-dials with the current credentials.
+	d.opts.Auth = a
+	// Keep username/password mirrored for diagnostic/log sanitization.
+	d.Username, d.password = credsFromAuth(a)
+}
+
+// Dialer is a deprecated alias for Client retained so that existing callers
+// compile against the v1 API without immediate changes.
+//
+// Deprecated: use Client. Will be removed in v2.
+type Dialer = Client
+
+// dialHost establishes a TLS connection to the IMAP server using the
+// supplied options. DialTimeout, when set, bounds both the TCP connect and
+// the TLS handshake (matching the prior tls.DialWithDialer behavior).
+func dialHost(ctx context.Context, opts Options) (*tls.Conn, error) {
+	if opts.DialTimeout > 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, opts.DialTimeout)
+			defer cancel()
+		}
+	}
+	address := opts.Host + ":" + strconv.Itoa(opts.Port)
+
+	// Build the TLS config: clone the caller's config so we don't mutate it,
+	// and fill in ServerName from Host when the caller didn't set one so
+	// hostname verification still works. Match the old tls.DialWithDialer
+	// behavior.
+	var tlsCfg *tls.Config
+	if opts.TLSConfig != nil {
+		tlsCfg = opts.TLSConfig.Clone()
 	} else {
-		d2, err = New(d.Username, d.Password, d.Host, d.Port)
+		tlsCfg = &tls.Config{}
 	}
-	// d2.Verbose = d1.Verbose
+	if tlsCfg.ServerName == "" {
+		tlsCfg.ServerName = opts.Host
+	}
+	if TLSSkipVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+
+	var rawConn net.Conn
+	var err error
+	if opts.Dialer != nil {
+		rawConn, err = opts.Dialer.DialContext(ctx, "tcp", address)
+	} else {
+		d := &net.Dialer{Timeout: opts.DialTimeout}
+		rawConn, err = d.DialContext(ctx, "tcp", address)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConn := tls.Client(rawConn, tlsCfg)
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = tlsConn.SetDeadline(deadline)
+	}
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = rawConn.Close()
+		return nil, err
+	}
+	_ = tlsConn.SetDeadline(time.Time{})
+	return tlsConn, nil
+}
+
+// Dial establishes a new IMAP connection using the supplied options and
+// authenticates with opts.Auth. The returned Client is ready to issue
+// commands.
+func Dial(ctx context.Context, opts Options) (*Client, error) {
+	if opts.Host == "" {
+		return nil, errors.New("imap: Options.Host is required")
+	}
+	if opts.Auth == nil {
+		return nil, errors.New("imap: Options.Auth is required")
+	}
+	if opts.Port == 0 {
+		opts.Port = 993
+	}
+
+	nextConnNumMutex.Lock()
+	connNum := nextConnNum
+	nextConnNum++
+	nextConnNumMutex.Unlock()
+
+	// Resolve retry count:
+	//   positive = use as-is
+	//   negative = explicitly disable (single attempt)
+	//   zero     = fall back to the package-level RetryCount
+	retryCount := opts.RetryCount
+	switch {
+	case retryCount > 0:
+	case retryCount < 0:
+		retryCount = 0
+	default:
+		retryCount = RetryCount
+	}
+
+	// Context-aware retry loop. Unlike retry.Retry which has its own
+	// uninterruptible sleep, this loop honors ctx during backoff so
+	// cancellation returns promptly.
+	var c *Client
+	var dialErr error
+	for attempt := 0; attempt <= retryCount; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if attempt > 0 {
+			debugLog(connNum, "", "retrying connection")
+			backoff := min(time.Duration(attempt*250)*time.Millisecond, 3*time.Second)
+			t := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, ctx.Err()
+			case <-t.C:
+			}
+		}
+
+		debugLog(connNum, "", "establishing connection", "host", opts.Host, "port", opts.Port)
+		conn, err := dialHost(ctx, opts)
+		if err != nil {
+			debugLog(connNum, "", "connection attempt failed", "error", err)
+			dialErr = err
+			continue
+		}
+		username, password := credsFromAuth(opts.Auth)
+		c = &Client{
+			conn:      conn,
+			Username:  username,
+			password:  password,
+			Host:      opts.Host,
+			Port:      opts.Port,
+			Connected: true,
+			ConnNum:   connNum,
+			auth:      opts.Auth,
+			opts:      opts,
+		}
+		dialErr = nil
+		break
+	}
+	if dialErr != nil || c == nil {
+		warnLog(connNum, "", "failed to establish connection", "error", dialErr)
+		return nil, dialErr
+	}
+
+	if err := opts.Auth.authenticate(ctx, c); err != nil {
+		errorLog(connNum, "", "authentication failed", "error", err)
+		_ = c.Close()
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// legacyOptions builds Options for the deprecated constructors. Only
+// DialTimeout is snapshot at construction time (it's used once during the
+// initial dial). CommandTimeout and RetryCount are intentionally left zero
+// so that effectiveCommandTimeout and effectiveRetryCount read the
+// package-level globals live on every command — preserving the pre-v1
+// behavior where mutating imap.CommandTimeout or imap.RetryCount after
+// construction affected subsequent operations.
+func legacyOptions(host string, port int, auth Authenticator) Options {
+	return Options{
+		Host:        host,
+		Port:        port,
+		Auth:        auth,
+		DialTimeout: DialTimeout,
+	}
+}
+
+// New creates a new IMAP connection using LOGIN authentication.
+//
+// Deprecated: use Dial with PasswordAuth. Will be removed in v2.
+func New(username, password, host string, port int) (*Client, error) {
+	return Dial(context.Background(), legacyOptions(host, port,
+		PasswordAuth{Username: username, Password: password}))
+}
+
+// NewWithOAuth2 creates a new IMAP connection using XOAUTH2 authentication.
+//
+// Deprecated: use Dial with XOAuth2. Will be removed in v2.
+func NewWithOAuth2(username, accessToken, host string, port int) (*Client, error) {
+	return Dial(context.Background(), legacyOptions(host, port,
+		XOAuth2{Username: username, AccessToken: accessToken}))
+}
+
+// Clone creates a copy of the client with the same configuration, reusing
+// the original Dial options (including TLSConfig, Dialer, and timeouts) and
+// authentication method. Runtime changes to Host or Port are honored so
+// Clone and Reconnect target the same endpoint.
+func (d *Client) Clone(ctx context.Context) (*Client, error) {
+	dialOpts := d.opts
+	dialOpts.Host = d.Host
+	dialOpts.Port = d.Port
+	d2, err := Dial(ctx, dialOpts)
+	if err != nil {
+		return nil, err
+	}
 	if d.Folder != "" {
 		if d.ReadOnly {
-			err = d2.ExamineFolder(d.Folder)
+			err = d2.ExamineFolder(ctx, d.Folder)
 		} else {
-			err = d2.SelectFolder(d.Folder)
+			err = d2.SelectFolder(ctx, d.Folder)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("imap clone: %s", err)
+			_ = d2.Close()
+			return nil, fmt.Errorf("imap clone: %w", err)
 		}
 	}
-	return d2, err
+	return d2, nil
 }
 
-// Close closes the IMAP connection
-func (d *Dialer) Close() (err error) {
+// Close closes the IMAP connection. Safe to call concurrently and multiple
+// times; subsequent calls after the first successful close are no-ops.
+func (d *Client) Close() (err error) {
+	d.closeMu.Lock()
+	defer d.closeMu.Unlock()
 	if d.Connected {
-		if Verbose {
-			debugLog(d.ConnNum, d.Folder, "closing connection")
-		}
+		debugLog(d.ConnNum, d.Folder, "closing connection")
 		err = d.conn.Close()
 		if err != nil {
-			return fmt.Errorf("imap close: %s", err)
+			return fmt.Errorf("imap close: %w", err)
 		}
 		d.Connected = false
 	}
 	return err
 }
 
-// Reconnect closes and reopens the IMAP connection with re-authentication
-func (d *Dialer) Reconnect() (err error) {
+// Reconnect closes and reopens the IMAP connection using the client's
+// original Dial options, re-authenticates, and restores any selected folder.
+func (d *Client) Reconnect(ctx context.Context) error {
 	_ = d.Close()
-	if Verbose {
-		debugLog(d.ConnNum, d.Folder, "reopening connection")
-	}
+	debugLog(d.ConnNum, d.Folder, "reopening connection")
 
-	conn, err := dialHost(d.Host, d.Port)
+	// Reuse the original dial options so custom TLSConfig, Dialer, and
+	// DialTimeout survive reconnection. Fields on the Client (Host/Port)
+	// take precedence in case they were updated after Dial.
+	dialOpts := d.opts
+	dialOpts.Host = d.Host
+	dialOpts.Port = d.Port
+	if dialOpts.DialTimeout == 0 {
+		dialOpts.DialTimeout = DialTimeout
+	}
+	conn, err := dialHost(ctx, dialOpts)
 	if err != nil {
-		return fmt.Errorf("imap reconnect dial: %s", err)
+		return fmt.Errorf("imap reconnect dial: %w", err)
 	}
 	d.conn = conn
 	d.Connected = true
 
-	// Re-authenticate using the original method
-	if d.useXOAUTH2 {
-		if err := d.Authenticate(d.Username, d.Password); err != nil {
-			// Best effort cleanup on failure
-			_ = d.conn.Close()
-			d.Connected = false
-			return fmt.Errorf("imap reconnect auth xoauth2: %s", err)
-		}
-	} else {
-		if err := d.Login(d.Username, d.Password); err != nil {
-			_ = d.conn.Close()
-			d.Connected = false
-			return fmt.Errorf("imap reconnect login: %s", err)
+	if d.auth != nil {
+		if err := d.auth.authenticate(ctx, d); err != nil {
+			_ = d.Close()
+			return fmt.Errorf("imap reconnect auth: %w", err)
 		}
 	}
 
-	// Restore selected folder state if any
 	if d.Folder != "" {
 		if d.ReadOnly {
-			if err := d.ExamineFolder(d.Folder); err != nil {
-				return fmt.Errorf("imap reconnect examine: %s", err)
+			if err := d.ExamineFolder(ctx, d.Folder); err != nil {
+				_ = d.Close()
+				return fmt.Errorf("imap reconnect examine: %w", err)
 			}
 		} else {
-			if err := d.SelectFolder(d.Folder); err != nil {
-				return fmt.Errorf("imap reconnect select: %s", err)
+			if err := d.SelectFolder(ctx, d.Folder); err != nil {
+				_ = d.Close()
+				return fmt.Errorf("imap reconnect select: %w", err)
 			}
 		}
 	}

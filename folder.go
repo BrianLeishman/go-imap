@@ -2,23 +2,35 @@ package imap
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 )
 
-// FolderStats represents statistics for a folder
-type FolderStats struct {
+// FolderStat represents statistics for a single folder.
+type FolderStat struct {
 	Name   string
 	Count  int
-	MaxUID int
+	MaxUID UID
 	Error  error
 }
 
-// GetFolders retrieves the list of available folders
-func (d *Dialer) GetFolders() (folders []string, err error) {
+// CountOptions configures folder iteration for TotalEmailCount and FolderStats.
+// The zero value walks every folder.
+type CountOptions struct {
+	// StartFolder skips folders returned by LIST before this one (matched by
+	// exact name). An empty value starts at the first folder.
+	StartFolder string
+	// ExcludeFolders names folders to skip entirely.
+	ExcludeFolders []string
+}
+
+// GetFolders retrieves the list of available folders.
+func (d *Client) GetFolders(ctx context.Context) (folders []string, err error) {
 	folders = make([]string, 0)
-	_, err = d.Exec(`LIST "" "*"`, false, RetryCount, func(line []byte) (err error) {
+	_, err = d.Exec(ctx, `LIST "" "*"`, false, d.effectiveRetryCount(), func(line []byte) (err error) {
 		line = dropNl(line)
 		if b := bytes.IndexByte(line, '\n'); b != -1 {
 			folders = append(folders, string(line[b+1:]))
@@ -42,7 +54,7 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 				}
 				i--
 			}
-			folders = append(folders, RemoveSlashes.Replace(string(line[i+1:end+1])))
+			folders = append(folders, removeSlashes.Replace(string(line[i+1:end+1])))
 		}
 		return err
 	})
@@ -53,9 +65,9 @@ func (d *Dialer) GetFolders() (folders []string, err error) {
 	return folders, nil
 }
 
-// ExamineFolder selects a folder in read-only mode
-func (d *Dialer) ExamineFolder(folder string) (err error) {
-	_, err = d.Exec(`EXAMINE "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+// ExamineFolder selects a folder in read-only mode.
+func (d *Client) ExamineFolder(ctx context.Context, folder string) error {
+	_, err := d.Exec(ctx, `EXAMINE "`+addSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return err
 	}
@@ -64,9 +76,9 @@ func (d *Dialer) ExamineFolder(folder string) (err error) {
 	return nil
 }
 
-// SelectFolder selects a folder in read-write mode
-func (d *Dialer) SelectFolder(folder string) (err error) {
-	_, err = d.Exec(`SELECT "`+AddSlashes.Replace(folder)+`"`, true, RetryCount, nil)
+// SelectFolder selects a folder in read-write mode.
+func (d *Client) SelectFolder(ctx context.Context, folder string) error {
+	_, err := d.Exec(ctx, `SELECT "`+addSlashes.Replace(folder)+`"`, true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return err
 	}
@@ -75,9 +87,9 @@ func (d *Dialer) SelectFolder(folder string) (err error) {
 	return nil
 }
 
-// selectAndGetCount executes SELECT command and extracts message count from EXISTS response
-func (d *Dialer) selectAndGetCount(folder string) (int, error) {
-	r, err := d.Exec("SELECT \""+AddSlashes.Replace(folder)+"\"", true, RetryCount, nil)
+// selectAndGetCount executes SELECT command and extracts message count from EXISTS response.
+func (d *Client) selectAndGetCount(ctx context.Context, folder string) (int, error) {
+	r, err := d.Exec(ctx, "SELECT \""+addSlashes.Replace(folder)+"\"", true, d.effectiveRetryCount(), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -96,8 +108,8 @@ func (d *Dialer) selectAndGetCount(folder string) (int, error) {
 
 // CreateFolder creates a new mailbox with the given name.
 // This command is not retried because CREATE is not idempotent.
-func (d *Dialer) CreateFolder(name string) error {
-	_, err := d.Exec(`CREATE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
+func (d *Client) CreateFolder(ctx context.Context, name string) error {
+	_, err := d.Exec(ctx, `CREATE "`+addSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap create folder: %w", err)
 	}
@@ -107,8 +119,8 @@ func (d *Dialer) CreateFolder(name string) error {
 // DeleteFolder permanently removes a mailbox.
 // If the deleted folder is currently selected, the folder state is cleared.
 // This command is not retried because DELETE is not idempotent.
-func (d *Dialer) DeleteFolder(name string) error {
-	_, err := d.Exec(`DELETE "`+AddSlashes.Replace(name)+`"`, false, 0, nil)
+func (d *Client) DeleteFolder(ctx context.Context, name string) error {
+	_, err := d.Exec(ctx, `DELETE "`+addSlashes.Replace(name)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap delete folder: %w", err)
 	}
@@ -122,8 +134,8 @@ func (d *Dialer) DeleteFolder(name string) error {
 // RenameFolder renames a mailbox from oldName to newName.
 // If the renamed folder is currently selected, the tracked folder name is updated.
 // This command is not retried because RENAME is not idempotent.
-func (d *Dialer) RenameFolder(oldName, newName string) error {
-	_, err := d.Exec(`RENAME "`+AddSlashes.Replace(oldName)+`" "`+AddSlashes.Replace(newName)+`"`, false, 0, nil)
+func (d *Client) RenameFolder(ctx context.Context, oldName, newName string) error {
+	_, err := d.Exec(ctx, `RENAME "`+addSlashes.Replace(oldName)+`" "`+addSlashes.Replace(newName)+`"`, false, 0, nil)
 	if err != nil {
 		return fmt.Errorf("imap rename folder: %w", err)
 	}
@@ -133,128 +145,40 @@ func (d *Dialer) RenameFolder(oldName, newName string) error {
 	return nil
 }
 
-// GetTotalEmailCount returns the total email count across all folders
-func (d *Dialer) GetTotalEmailCount() (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding("", nil)
-}
-
-// GetTotalEmailCountExcluding returns total email count excluding specified folders
-func (d *Dialer) GetTotalEmailCountExcluding(excludedFolders []string) (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding("", excludedFolders)
-}
-
-// GetTotalEmailCountStartingFrom returns total email count starting from a specific folder
-func (d *Dialer) GetTotalEmailCountStartingFrom(startFolder string) (count int, err error) {
-	return d.GetTotalEmailCountStartingFromExcluding(startFolder, nil)
-}
-
-// GetTotalEmailCountSafe returns total email count with error handling per folder
-func (d *Dialer) GetTotalEmailCountSafe() (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding("", nil)
-}
-
-// GetTotalEmailCountSafeExcluding returns total email count excluding folders with error handling
-func (d *Dialer) GetTotalEmailCountSafeExcluding(excludedFolders []string) (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding("", excludedFolders)
-}
-
-// GetTotalEmailCountSafeStartingFrom returns total email count starting from folder with error handling
-func (d *Dialer) GetTotalEmailCountSafeStartingFrom(startFolder string) (count int, folderErrors []error, err error) {
-	return d.GetTotalEmailCountSafeStartingFromExcluding(startFolder, nil)
-}
-
-// GetFolderStats returns statistics for all folders
-func (d *Dialer) GetFolderStats() ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding("", nil)
-}
-
-// GetFolderStatsExcluding returns statistics for folders excluding specified ones
-func (d *Dialer) GetFolderStatsExcluding(excludedFolders []string) ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding("", excludedFolders)
-}
-
-// GetFolderStatsStartingFrom returns statistics for folders starting from a specific one
-func (d *Dialer) GetFolderStatsStartingFrom(startFolder string) ([]FolderStats, error) {
-	return d.GetFolderStatsStartingFromExcluding(startFolder, nil)
-}
-
-// GetTotalEmailCountStartingFromExcluding returns total email count with options for starting folder and exclusions
-func (d *Dialer) GetTotalEmailCountStartingFromExcluding(startFolder string, excludedFolders []string) (count int, err error) {
-	folders, err := d.GetFolders()
-	if err != nil {
-		return 0, err
-	}
-
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
-		excludeMap[folder] = true
-	}
-
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
-
-	for _, folder := range folders {
-		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
-				continue
-			}
-		}
-
-		if excludeMap[folder] {
-			continue
-		}
-
-		folderCount, err := d.selectAndGetCount(folder)
-		if err == nil {
-			count += folderCount
-		}
-	}
-
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(currentFolder)
-		} else {
-			_ = d.SelectFolder(currentFolder)
-		}
-	}
-
-	return count, nil
-}
-
-// GetTotalEmailCountSafeStartingFromExcluding returns total email count with per-folder error handling
-func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string, excludedFolders []string) (count int, folderErrors []error, err error) {
-	folders, err := d.GetFolders()
+// TotalEmailCount sums message counts across folders. Per-folder failures
+// are reported in folderErrors but do not abort iteration. err is non-nil
+// if the initial folder list could not be retrieved or if ctx is cancelled
+// mid-iteration; in the latter case count and folderErrors hold the
+// partial result accumulated before cancellation.
+func (d *Client) TotalEmailCount(ctx context.Context, opts CountOptions) (count int, folderErrors []error, err error) {
+	folders, err := d.GetFolders(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
+	excludeMap := make(map[string]bool, len(opts.ExcludeFolders))
+	for _, folder := range opts.ExcludeFolders {
 		excludeMap[folder] = true
 	}
 
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
+	defer d.restoreSelection(ctx, d.Folder, d.ReadOnly)
 
+	startFound := opts.StartFolder == ""
 	for _, folder := range folders {
+		if cerr := ctx.Err(); cerr != nil {
+			return count, folderErrors, cerr
+		}
 		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
+			if folder != opts.StartFolder {
 				continue
 			}
+			startFound = true
 		}
-
 		if excludeMap[folder] {
 			continue
 		}
 
-		folderCount, folderErr := d.selectAndGetCount(folder)
+		folderCount, folderErr := d.selectAndGetCount(ctx, folder)
 		if folderErr != nil {
 			folderErrors = append(folderErrors, fmt.Errorf("folder %s: %w", folder, folderErr))
 			continue
@@ -262,53 +186,43 @@ func (d *Dialer) GetTotalEmailCountSafeStartingFromExcluding(startFolder string,
 		count += folderCount
 	}
 
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(currentFolder)
-		} else {
-			_ = d.SelectFolder(currentFolder)
-		}
-	}
-
 	return count, folderErrors, nil
 }
 
-// GetFolderStatsStartingFromExcluding returns detailed statistics for folders with options
-func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, excludedFolders []string) ([]FolderStats, error) {
-	folders, err := d.GetFolders()
+// FolderStats returns per-folder statistics. Per-folder failures are reported
+// in FolderStat.Error rather than aborting the iteration. If ctx is cancelled
+// mid-iteration the partial slice is returned with ctx.Err().
+func (d *Client) FolderStats(ctx context.Context, opts CountOptions) ([]FolderStat, error) {
+	folders, err := d.GetFolders(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	startFound := startFolder == ""
-	excludeMap := make(map[string]bool)
-	for _, folder := range excludedFolders {
+	excludeMap := make(map[string]bool, len(opts.ExcludeFolders))
+	for _, folder := range opts.ExcludeFolders {
 		excludeMap[folder] = true
 	}
 
-	currentFolder := d.Folder
-	currentReadOnly := d.ReadOnly
+	defer d.restoreSelection(ctx, d.Folder, d.ReadOnly)
 
-	var stats []FolderStats
-
+	var stats []FolderStat
+	startFound := opts.StartFolder == ""
 	for _, folder := range folders {
+		if cerr := ctx.Err(); cerr != nil {
+			return stats, cerr
+		}
 		if !startFound {
-			if folder == startFolder {
-				startFound = true
-			} else {
+			if folder != opts.StartFolder {
 				continue
 			}
+			startFound = true
 		}
-
 		if excludeMap[folder] {
 			continue
 		}
 
-		stat := FolderStats{Name: folder}
-
-		// Get message count using helper function
-		count, err := d.selectAndGetCount(folder)
+		stat := FolderStat{Name: folder}
+		count, err := d.selectAndGetCount(ctx, folder)
 		if err != nil {
 			stat.Error = err
 			stats = append(stats, stat)
@@ -316,9 +230,8 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 		}
 		stat.Count = count
 
-		// Get highest UID
 		if stat.Count > 0 {
-			uidResponse, err := d.Exec("UID SEARCH ALL", true, RetryCount, nil)
+			uidResponse, err := d.Exec(ctx, "UID SEARCH ALL", true, d.effectiveRetryCount(), nil)
 			if err == nil {
 				uids, err := parseUIDSearchResponse(uidResponse)
 				if err == nil && len(uids) > 0 {
@@ -330,14 +243,32 @@ func (d *Dialer) GetFolderStatsStartingFromExcluding(startFolder string, exclude
 		stats = append(stats, stat)
 	}
 
-	// Restore original folder state
-	if currentFolder != "" {
-		if currentReadOnly {
-			_ = d.ExamineFolder(currentFolder)
-		} else {
-			_ = d.SelectFolder(currentFolder)
-		}
-	}
-
 	return stats, nil
+}
+
+// restoreSelection re-selects the previously selected folder (if any) using
+// the original read-only/read-write mode. The caller's context cancellation
+// is intentionally detached so a cancelled or timed-out iteration does not
+// leave the client selected on an unrelated mailbox; an explicit cleanup
+// deadline still bounds the SELECT/EXAMINE so a stalled server cannot
+// block the call forever.
+func (d *Client) restoreSelection(ctx context.Context, folder string, readOnly bool) {
+	if folder == "" {
+		return
+	}
+	restoreCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if readOnly {
+		_ = d.ExamineFolder(restoreCtx, folder)
+	} else {
+		_ = d.SelectFolder(restoreCtx, folder)
+	}
+}
+
+// cleanupContext returns a derived context suitable for best-effort cleanup
+// after the caller's ctx has been cancelled or timed out. Cancellation is
+// detached (so the cleanup runs to completion) but a fallback deadline is
+// applied so a stalled server cannot hang the cleanup indefinitely.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 }
