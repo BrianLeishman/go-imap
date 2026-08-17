@@ -9,7 +9,7 @@ require (
 	github.com/jhillyerd/enmime/v2 v2.4.1
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
-	golang.org/x/net v0.57.0
+	golang.org/x/net v0.58.0
 )
 
 require (
@@ -31,5 +31,5 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 )
