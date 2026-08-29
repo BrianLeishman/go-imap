@@ -3,6 +3,7 @@
 package imap
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 )
+
 
 // Integration tests require a running IMAP server.
 // Start one with: docker compose up -d
@@ -125,13 +127,13 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Select INBOX
-	if err := conn.SelectFolder("INBOX"); err != nil {
+	if err := conn.SelectFolder(ctx, "INBOX"); err != nil {
 		t.Fatalf("Failed to select INBOX: %v", err)
 	}
 
 	// Test GetLastNUIDs
 	t.Run("GetLastNUIDs returns correct count", func(t *testing.T) {
-		uids, err := conn.GetLastNUIDs(5)
+		uids, err := conn.GetLastNUIDs(ctx, 5)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs failed: %v", err)
 		}
@@ -150,7 +152,7 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	})
 
 	t.Run("GetLastNUIDs with n=0 returns nil", func(t *testing.T) {
-		uids, err := conn.GetLastNUIDs(0)
+		uids, err := conn.GetLastNUIDs(ctx, 0)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(0) failed: %v", err)
 		}
@@ -160,7 +162,7 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	})
 
 	t.Run("GetLastNUIDs with negative n returns nil", func(t *testing.T) {
-		uids, err := conn.GetLastNUIDs(-5)
+		uids, err := conn.GetLastNUIDs(ctx, -5)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(-5) failed: %v", err)
 		}
@@ -170,12 +172,12 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	})
 
 	t.Run("GetLastNUIDs with n greater than total returns all", func(t *testing.T) {
-		allUIDs, err := conn.GetUIDs("ALL")
+		allUIDs, err := conn.GetUIDs(ctx, "ALL")
 		if err != nil {
 			t.Fatalf("GetUIDs(ALL) failed: %v", err)
 		}
 
-		lastUIDs, err := conn.GetLastNUIDs(1000)
+		lastUIDs, err := conn.GetLastNUIDs(ctx, 1000)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(1000) failed: %v", err)
 		}
@@ -186,12 +188,12 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	})
 
 	t.Run("GetLastNUIDs returns highest UIDs", func(t *testing.T) {
-		allUIDs, err := conn.GetUIDs("ALL")
+		allUIDs, err := conn.GetUIDs(ctx, "ALL")
 		if err != nil {
 			t.Fatalf("GetUIDs(ALL) failed: %v", err)
 		}
 
-		last5, err := conn.GetLastNUIDs(5)
+		last5, err := conn.GetLastNUIDs(ctx, 5)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(5) failed: %v", err)
 		}
@@ -210,12 +212,12 @@ func TestIntegration_GetLastNUIDs(t *testing.T) {
 	t.Run("GetMaxUID returns highest UID", func(t *testing.T) {
 		t.Skip("enable once test-imap server supports RFC-4731. Currently fails with: 'Search command not supported'.")
 
-		last1, err := conn.GetLastNUIDs(1)
+		last1, err := conn.GetLastNUIDs(ctx, 1)
 		if err != nil {
 			t.Fatalf("GetLastNUIDs(1) failed: %v", err)
 		}
 
-		maxUID, err := conn.GetMaxUID()
+		maxUID, err := conn.GetMaxUID(ctx)
 		if err != nil {
 			t.Fatalf("GetMaxUID() failed: %v", err)
 		}
@@ -245,12 +247,12 @@ func TestIntegration_GetUIDs_Ranges(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	if err := conn.SelectFolder("INBOX"); err != nil {
+	if err := conn.SelectFolder(ctx, "INBOX"); err != nil {
 		t.Fatalf("Failed to select INBOX: %v", err)
 	}
 
 	t.Run("GetUIDs ALL returns all messages", func(t *testing.T) {
-		uids, err := conn.GetUIDs("ALL")
+		uids, err := conn.GetUIDs(ctx, "ALL")
 		if err != nil {
 			t.Fatalf("GetUIDs(ALL) failed: %v", err)
 		}
@@ -261,11 +263,11 @@ func TestIntegration_GetUIDs_Ranges(t *testing.T) {
 
 	t.Run("GetUIDs with * returns single highest UID", func(t *testing.T) {
 		// Re-select folder to ensure fresh state
-		if err := conn.SelectFolder("INBOX"); err != nil {
+		if err := conn.SelectFolder(ctx, "INBOX"); err != nil {
 			t.Fatalf("Failed to re-select INBOX: %v", err)
 		}
 
-		allUIDs, err := conn.GetUIDs("ALL")
+		allUIDs, err := conn.GetUIDs(ctx, "ALL")
 		if err != nil {
 			t.Fatalf("GetUIDs(ALL) failed: %v", err)
 		}
@@ -275,7 +277,7 @@ func TestIntegration_GetUIDs_Ranges(t *testing.T) {
 
 		// The * search should return the highest UID
 		// Note: GreenMail sometimes has issues with * searches, so we handle errors gracefully
-		starUIDs, err := conn.GetUIDs("*")
+		starUIDs, err := conn.GetUIDs(ctx, "*")
 		if err != nil {
 			t.Skipf("GetUIDs(*) failed (known GreenMail quirk): %v", err)
 		}
@@ -310,7 +312,7 @@ func TestIntegration_Connection(t *testing.T) {
 		}
 		defer conn.Close()
 
-		folders, err := conn.GetFolders()
+		folders, err := conn.GetFolders(ctx)
 		if err != nil {
 			t.Fatalf("Failed to get folders: %v", err)
 		}

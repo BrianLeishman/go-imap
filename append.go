@@ -3,8 +3,10 @@ package imap
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/xid"
@@ -12,7 +14,7 @@ import (
 
 // waitForTaggedOK reads lines from r until it finds the tagged response matching tag.
 // It returns nil if the response is OK, or an error otherwise.
-func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
+func (d *Client) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 	taglen := len(tag)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -27,7 +29,7 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 
 		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
 			if !bytes.Equal(line[taglen+1:taglen+3], []byte("OK")) {
-				return fmt.Errorf("imap append failed: %s", dropNl(line[taglen+1:]))
+				return parseCommandError(string(tag), "APPEND", line[taglen+1:])
 			}
 			return nil
 		}
@@ -46,11 +48,19 @@ func (d *Dialer) waitForTaggedOK(r *bufio.Reader, tag []byte) error {
 // two-phase literal transfer. A partial send cannot be safely retried without
 // risking duplicate messages.
 //
+// Context semantics: ctx bounds phases 1–3 (sending the command, waiting for
+// the continuation, and streaming the literal). Once the literal has been
+// fully transmitted, the server may commit the message at any moment, so the
+// final tagged-response wait ignores ctx cancellation in favor of a short
+// cleanup deadline. This means a caller that cancels ctx after the literal
+// is on the wire can still block briefly while the outcome is observed —
+// returning early would risk duplicate mail on retry.
+//
 // Example:
 //
 //	msg := []byte("From: a@b.com\r\nTo: c@d.com\r\nSubject: Hi\r\n\r\nHello!")
-//	err := conn.Append("INBOX", []string{`\Seen`}, time.Time{}, msg)
-func (d *Dialer) Append(folder string, flags []string, date time.Time, message []byte) error {
+//	err := conn.Append(ctx, "INBOX", []string{`\Seen`}, time.Time{}, msg)
+func (d *Client) Append(ctx context.Context, folder string, flags []string, date time.Time, message []byte) error {
 	// Build the APPEND command prefix
 	flagStr := ""
 	if len(flags) > 0 {
@@ -62,13 +72,22 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	}
 
 	cmd := fmt.Sprintf(`APPEND "%s"%s%s {%d}`,
-		AddSlashes.Replace(folder), flagStr, dateStr, len(message))
+		addSlashes.Replace(folder), flagStr, dateStr, len(message))
 
 	tag := []byte(strings.ToUpper(xid.New().String()))
 
-	if CommandTimeout != 0 {
-		_ = d.conn.SetDeadline(time.Now().Add(CommandTimeout))
-		defer func() { _ = d.conn.SetDeadline(time.Time{}) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var stopOnce sync.Once
+	rawStop := d.watchCtxCancel(ctx)
+	stop := func() { stopOnce.Do(rawStop) }
+	defer func() {
+		stop()
+		_ = d.conn.SetDeadline(time.Time{})
+	}()
+	if deadline, ok := d.deadlineFromCtx(ctx); ok {
+		_ = d.conn.SetDeadline(deadline)
 	}
 
 	if Verbose {
@@ -78,22 +97,37 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	// Phase 1: Send the APPEND command with literal size
 	_, err := fmt.Fprintf(d.conn, "%s %s\r\n", tag, cmd)
 	if err != nil {
-		return fmt.Errorf("imap append write command: %w", err)
-	}
-
-	// Phase 2: Wait for continuation response (+)
-	r := bufio.NewReader(d.conn)
-	line, err := r.ReadBytes('\n')
-	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append read continuation: %w", err)
+		return fmt.Errorf("imap append write command: %w", wrapCtxErr(ctx, err))
 	}
 
-	if Verbose && !SkipResponses {
-		debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
-	}
+	// Phase 2: Wait for continuation response (+). The server may emit
+	// untagged responses (e.g. "* OK ...") first, and may reject the
+	// command outright with a tagged NO/BAD/BYE before requesting the
+	// literal — surface those as CommandError so callers can inspect
+	// response codes like [TRYCREATE] or [OVERQUOTA].
+	r := bufio.NewReader(d.conn)
+	taglen := len(tag)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			_ = d.Close()
+			return fmt.Errorf("imap append read continuation: %w", wrapCtxErr(ctx, err))
+		}
 
-	if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
+		if Verbose && !SkipResponses {
+			debugLog(d.ConnNum, d.Folder, "server response", "response", string(dropNl(line)))
+		}
+
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte("+")) {
+			break
+		}
+		if len(line) >= taglen+3 && bytes.Equal(line[:taglen], tag) {
+			return parseCommandError(string(tag), "APPEND", line[taglen+1:])
+		}
+		if bytes.HasPrefix(line, []byte("* ")) {
+			continue
+		}
 		return fmt.Errorf("imap append: expected continuation (+), got: %s", dropNl(line))
 	}
 
@@ -101,14 +135,28 @@ func (d *Dialer) Append(folder string, flags []string, date time.Time, message [
 	_, err = d.conn.Write(message)
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write literal: %w", err)
+		return fmt.Errorf("imap append write literal: %w", wrapCtxErr(ctx, err))
 	}
 	_, err = d.conn.Write([]byte("\r\n"))
 	if err != nil {
 		_ = d.Close()
-		return fmt.Errorf("imap append write crlf: %w", err)
+		return fmt.Errorf("imap append write crlf: %w", wrapCtxErr(ctx, err))
 	}
 
-	// Phase 4: Read the tagged response
+	// Phase 4: Read the tagged response. Once the literal has been fully
+	// transmitted the server may commit the message at any moment, so
+	// returning ctx.Err() here risks duplicate mail if the caller retries.
+	// Detach cancellation and apply a bounded deadline so we can reliably
+	// observe OK/NO and report the authoritative outcome. The deadline is
+	// the shorter of the caller's CommandTimeout (when configured) and the
+	// default cleanup budget — this preserves the per-command-timeout
+	// contract while still capping how long we wait for a stalled server.
+	stop()
+	_ = d.conn.SetDeadline(time.Time{})
+	cleanupBudget := 30 * time.Second
+	if t := d.effectiveCommandTimeout(); t > 0 && t < cleanupBudget {
+		cleanupBudget = t
+	}
+	_ = d.conn.SetDeadline(time.Now().Add(cleanupBudget))
 	return d.waitForTaggedOK(r, tag)
 }

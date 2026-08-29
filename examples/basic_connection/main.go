@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -8,18 +9,24 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
+var ctx = context.Background()
+
 func main() {
-	imap.Verbose = false                   // Set to true to see all IMAP commands/responses
-	imap.RetryCount = 3                    // Number of retries for failed commands
-	imap.DialTimeout = 10 * time.Second    // Connection timeout
-	imap.CommandTimeout = 30 * time.Second // Command timeout
+	imap.Verbose = false // Set to true to see all IMAP commands/responses
 
 	// For self-signed certificates (use with caution!)
 	// imap.TLSSkipVerify = true
 
-	// Connect with standard LOGIN authentication
-	// Replace with your actual credentials and server
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+	// Connect with standard LOGIN authentication.
+	// Replace with your actual credentials and server.
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host:           "mail.server.com",
+		Port:           993,
+		Auth:           imap.PasswordAuth{Username: "username", Password: "password"},
+		DialTimeout:    10 * time.Second,
+		CommandTimeout: 30 * time.Second,
+		RetryCount:     3,
+	})
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -30,7 +37,7 @@ func main() {
 	}()
 
 	// Quick test - list folders
-	folders, err := m.GetFolders()
+	folders, err := m.GetFolders(ctx)
 	if err != nil {
 		log.Fatalf("Failed to get folders: %v", err)
 	}

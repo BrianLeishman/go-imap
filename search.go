@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -51,9 +52,9 @@ func (s *SearchBuilder) buildRaw() string {
 //
 // Example:
 //
-//	uids, err := conn.SearchUIDs(imap.Search().From("alice@example.com").Unseen())
-func (d *Dialer) SearchUIDs(search *SearchBuilder) ([]int, error) {
-	return d.GetUIDs(search.Build())
+//	uids, err := conn.SearchUIDs(ctx, imap.Search().From("alice@example.com").Unseen())
+func (d *Client) SearchUIDs(ctx context.Context, search *SearchBuilder) ([]UID, error) {
+	return d.GetUIDs(ctx, search.Build())
 }
 
 // --- Flag criteria ---

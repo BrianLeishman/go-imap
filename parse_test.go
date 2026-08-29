@@ -215,13 +215,13 @@ func TestParseUIDSearchResponse(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    []int
+		want    []UID
 		wantErr bool
 	}{
 		{
 			name:  "basic search response",
 			input: "* SEARCH 123 456\r\nA1 OK SEARCH completed\r\n",
-			want:  []int{123, 456},
+			want:  []UID{123, 456},
 		},
 		{
 			name: "literal preamble is ignored",
@@ -230,7 +230,7 @@ func TestParseUIDSearchResponse(t *testing.T) {
 				"* SEARCH 15461 15469 15470 15485 15491 15497",
 				"A144 OK UID SEARCH completed",
 			}, "\r\n"),
-			want: []int{15461, 15469, 15470, 15485, 15491, 15497},
+			want: []UID{15461, 15469, 15470, 15485, 15491, 15497},
 		},
 		{
 			name:    "no search line",

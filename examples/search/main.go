@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -8,9 +9,15 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
+var ctx = context.Background()
+
 func main() {
 	// Connect to server
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -20,7 +27,7 @@ func main() {
 		}
 	}()
 
-	err = m.SelectFolder("INBOX")
+	err = m.SelectFolder(ctx, "INBOX")
 	if err != nil {
 		log.Fatalf("Failed to select INBOX: %v", err)
 	}
@@ -28,11 +35,11 @@ func main() {
 	fmt.Println("=== Basic Searches ===")
 
 	// Basic searches - returns slice of UIDs
-	allUIDs, _ := m.GetUIDs("ALL")         // All emails
-	unseenUIDs, _ := m.GetUIDs("UNSEEN")   // Unread emails
-	recentUIDs, _ := m.GetUIDs("RECENT")   // Recent emails
-	seenUIDs, _ := m.GetUIDs("SEEN")       // Read emails
-	flaggedUIDs, _ := m.GetUIDs("FLAGGED") // Starred/flagged emails
+	allUIDs, _ := m.GetUIDs(ctx, "ALL")         // All emails
+	unseenUIDs, _ := m.GetUIDs(ctx, "UNSEEN")   // Unread emails
+	recentUIDs, _ := m.GetUIDs(ctx, "RECENT")   // Recent emails
+	seenUIDs, _ := m.GetUIDs(ctx, "SEEN")       // Read emails
+	flaggedUIDs, _ := m.GetUIDs(ctx, "FLAGGED") // Starred/flagged emails
 
 	fmt.Printf("Found %d total emails\n", len(allUIDs))
 	fmt.Printf("Found %d unread emails\n", len(unseenUIDs))
@@ -52,10 +59,10 @@ func main() {
 	weekAgo := time.Now().AddDate(0, 0, -7).Format("2-Jan-2006")
 	monthAgo := time.Now().AddDate(0, -1, 0).Format("2-Jan-2006")
 
-	todayUIDs, _ := m.GetUIDs(fmt.Sprintf("ON %s", today))
-	sinceUIDs, _ := m.GetUIDs(fmt.Sprintf("SINCE %s", weekAgo))
-	beforeUIDs, _ := m.GetUIDs(fmt.Sprintf("BEFORE %s", today))
-	rangeUIDs, _ := m.GetUIDs(fmt.Sprintf("SINCE %s BEFORE %s", monthAgo, today))
+	todayUIDs, _ := m.GetUIDs(ctx, fmt.Sprintf("ON %s", today))
+	sinceUIDs, _ := m.GetUIDs(ctx, fmt.Sprintf("SINCE %s", weekAgo))
+	beforeUIDs, _ := m.GetUIDs(ctx, fmt.Sprintf("BEFORE %s", today))
+	rangeUIDs, _ := m.GetUIDs(ctx, fmt.Sprintf("SINCE %s BEFORE %s", monthAgo, today))
 
 	fmt.Printf("Emails from today: %d\n", len(todayUIDs))
 	fmt.Printf("Emails since a week ago: %d\n", len(sinceUIDs))
@@ -65,9 +72,9 @@ func main() {
 	fmt.Println("\n=== Sender/Recipient Searches ===")
 
 	// From/To searches
-	fromBossUIDs, _ := m.GetUIDs(`FROM "boss@company.com"`)
-	toMeUIDs, _ := m.GetUIDs(`TO "me@company.com"`)
-	ccUIDs, _ := m.GetUIDs(`CC "team@company.com"`)
+	fromBossUIDs, _ := m.GetUIDs(ctx, `FROM "boss@company.com"`)
+	toMeUIDs, _ := m.GetUIDs(ctx, `TO "me@company.com"`)
+	ccUIDs, _ := m.GetUIDs(ctx, `CC "team@company.com"`)
 
 	fmt.Printf("Emails from boss: %d\n", len(fromBossUIDs))
 	fmt.Printf("Emails to me: %d\n", len(toMeUIDs))
@@ -76,9 +83,9 @@ func main() {
 	fmt.Println("\n=== Content Searches ===")
 
 	// Subject/body searches
-	subjectUIDs, _ := m.GetUIDs(`SUBJECT "invoice"`)
-	bodyUIDs, _ := m.GetUIDs(`BODY "payment"`)
-	textUIDs, _ := m.GetUIDs(`TEXT "urgent"`) // Searches both subject and body
+	subjectUIDs, _ := m.GetUIDs(ctx, `SUBJECT "invoice"`)
+	bodyUIDs, _ := m.GetUIDs(ctx, `BODY "payment"`)
+	textUIDs, _ := m.GetUIDs(ctx, `TEXT "urgent"`) // Searches both subject and body
 
 	fmt.Printf("Emails with 'invoice' in subject: %d\n", len(subjectUIDs))
 	fmt.Printf("Emails with 'payment' in body: %d\n", len(bodyUIDs))
@@ -86,9 +93,9 @@ func main() {
 
 	fmt.Println("\n=== Complex Searches ===")
 
-	complexUIDs1, _ := m.GetUIDs(`UNSEEN FROM "support@github.com" SINCE 1-Jan-2024`)
-	complexUIDs2, _ := m.GetUIDs(`FLAGGED SUBJECT "important" SINCE 1-Jan-2024`)
-	complexUIDs3, _ := m.GetUIDs(`NOT SEEN NOT FROM "noreply@" SINCE 1-Jan-2024`)
+	complexUIDs1, _ := m.GetUIDs(ctx, `UNSEEN FROM "support@github.com" SINCE 1-Jan-2024`)
+	complexUIDs2, _ := m.GetUIDs(ctx, `FLAGGED SUBJECT "important" SINCE 1-Jan-2024`)
+	complexUIDs3, _ := m.GetUIDs(ctx, `NOT SEEN NOT FROM "noreply@" SINCE 1-Jan-2024`)
 
 	fmt.Printf("Unread emails from GitHub support this year: %d\n", len(complexUIDs1))
 	fmt.Printf("Flagged emails with 'important' in subject this year: %d\n", len(complexUIDs2))
@@ -96,11 +103,11 @@ func main() {
 
 	fmt.Println("\n=== UID Ranges ===")
 
-	firstUID, _ := m.GetUIDs("1")       // First email
-	lastUID, _ := m.GetUIDs("*")        // Last email
-	maxUID, err := m.GetMaxUID()        // Last email (cheaper, requires RFC-4731)
-	first10UIDs, _ := m.GetUIDs("1:10") // First 10 emails
-	last10UIDs, _ := m.GetUIDs("*:10")  // Last 10 emails (reverse)
+	firstUID, _ := m.GetUIDs(ctx, "1")       // First email
+	lastUID, _ := m.GetUIDs(ctx, "*")        // Last email
+	maxUID, err := m.GetMaxUID(ctx)        // Last email (cheaper, requires RFC-4731)
+	first10UIDs, _ := m.GetUIDs(ctx, "1:10") // First 10 emails
+	last10UIDs, _ := m.GetUIDs(ctx, "*:10")  // Last 10 emails (reverse)
 
 	fmt.Printf("First email UID: %v\n", firstUID)
 	fmt.Printf("Last email UID: %v\n", lastUID)
@@ -119,9 +126,9 @@ func main() {
 	fmt.Println("\n=== Size-based Searches ===")
 
 	// Size-based searches (in bytes)
-	largeUIDs, _ := m.GetUIDs("LARGER 10485760") // Emails larger than 10MB
-	mediumUIDs, _ := m.GetUIDs("LARGER 1048576") // Emails larger than 1MB
-	smallUIDs, _ := m.GetUIDs("SMALLER 10240")   // Emails smaller than 10KB
+	largeUIDs, _ := m.GetUIDs(ctx, "LARGER 10485760") // Emails larger than 10MB
+	mediumUIDs, _ := m.GetUIDs(ctx, "LARGER 1048576") // Emails larger than 1MB
+	smallUIDs, _ := m.GetUIDs(ctx, "SMALLER 10240")   // Emails smaller than 10KB
 
 	fmt.Printf("Emails larger than 10MB: %d\n", len(largeUIDs))
 	fmt.Printf("Emails larger than 1MB: %d\n", len(mediumUIDs))
@@ -130,18 +137,18 @@ func main() {
 	fmt.Println("\n=== Search Builder (Type-Safe API) ===")
 
 	// The SearchBuilder provides a fluent, type-safe alternative to raw strings
-	unseenBuilderUIDs, _ := m.SearchUIDs(imap.Search().Unseen())
+	unseenBuilderUIDs, _ := m.SearchUIDs(ctx, imap.Search().Unseen())
 	fmt.Printf("Unread emails (builder): %d\n", len(unseenBuilderUIDs))
 
 	// Combine multiple criteria
 	weekAgoTime := time.Now().AddDate(0, 0, -7)
-	recentUnread, _ := m.SearchUIDs(
+	recentUnread, _ := m.SearchUIDs(ctx, 
 		imap.Search().Unseen().Since(weekAgoTime),
 	)
 	fmt.Printf("Unread emails from last 7 days (builder): %d\n", len(recentUnread))
 
 	// OR: messages from either sender
-	fromEither, _ := m.SearchUIDs(
+	fromEither, _ := m.SearchUIDs(ctx, 
 		imap.Search().Or(
 			imap.Search().From("boss@company.com"),
 			imap.Search().From("support@github.com"),
@@ -150,13 +157,13 @@ func main() {
 	fmt.Printf("Emails from boss or GitHub support: %d\n", len(fromEither))
 
 	// NOT: exclude certain senders
-	notNoreply, _ := m.SearchUIDs(
+	notNoreply, _ := m.SearchUIDs(ctx, 
 		imap.Search().Not(imap.Search().From("noreply@")).Unseen(),
 	)
 	fmt.Printf("Unread emails NOT from noreply: %d\n", len(notNoreply))
 
 	// Size filter
-	largeBuilder, _ := m.SearchUIDs(imap.Search().Larger(1048576))
+	largeBuilder, _ := m.SearchUIDs(ctx, imap.Search().Larger(1048576))
 	fmt.Printf("Emails larger than 1MB (builder): %d\n", len(largeBuilder))
 
 	// You can also get the raw string from a builder
@@ -165,12 +172,12 @@ func main() {
 
 	fmt.Println("\n=== Special Searches ===")
 
-	answeredUIDs, _ := m.GetUIDs("ANSWERED")
-	unansweredUIDs, _ := m.GetUIDs("UNANSWERED")
-	deletedUIDs, _ := m.GetUIDs("DELETED")
-	undeletedUIDs, _ := m.GetUIDs("UNDELETED")
-	draftUIDs, _ := m.GetUIDs("DRAFT")
-	undraftUIDs, _ := m.GetUIDs("UNDRAFT")
+	answeredUIDs, _ := m.GetUIDs(ctx, "ANSWERED")
+	unansweredUIDs, _ := m.GetUIDs(ctx, "UNANSWERED")
+	deletedUIDs, _ := m.GetUIDs(ctx, "DELETED")
+	undeletedUIDs, _ := m.GetUIDs(ctx, "UNDELETED")
+	draftUIDs, _ := m.GetUIDs(ctx, "DRAFT")
+	undraftUIDs, _ := m.GetUIDs(ctx, "UNDRAFT")
 
 	fmt.Printf("Answered emails: %d\n", len(answeredUIDs))
 	fmt.Printf("Unanswered emails: %d\n", len(unansweredUIDs))

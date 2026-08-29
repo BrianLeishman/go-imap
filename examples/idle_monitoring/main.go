@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -11,13 +12,19 @@ import (
 	imap "github.com/BrianLeishman/go-imap"
 )
 
-func connectAndSelect() (*imap.Dialer, error) {
-	m, err := imap.New("username", "password", "mail.server.com", 993)
+var ctx = context.Background()
+
+func connectAndSelect() (*imap.Client, error) {
+	m, err := imap.Dial(context.Background(), imap.Options{
+		Host: "mail.server.com",
+		Port: 993,
+		Auth: imap.PasswordAuth{Username: "username", Password: "password"},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 
-	if err := m.SelectFolder("INBOX"); err != nil {
+	if err := m.SelectFolder(ctx, "INBOX"); err != nil {
 		_ = m.Close()
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
@@ -25,19 +32,22 @@ func connectAndSelect() (*imap.Dialer, error) {
 	return m, nil
 }
 
-func handleNewEmail(m *imap.Dialer, e imap.ExistsEvent) {
-	fmt.Printf("[EXISTS] New message arrived! Message index: %d\n", e.MessageIndex)
+func handleNewEmail(m *imap.Client, e imap.ExistsEvent) {
+	fmt.Printf("[EXISTS] New message arrived! Sequence number: %d\n", e.SeqNum)
 	fmt.Printf("         Timestamp: %s\n", time.Now().Format("15:04:05"))
 	fmt.Printf("         Fetching new email details...\n")
 
-	uids, err := m.GetUIDs(fmt.Sprintf("%d", e.MessageIndex))
+	// Resolve sequence number -> UID via SEARCH (a bare number in IMAP
+	// SEARCH matches by sequence number). EXISTS reports the new total
+	// count, which equals the sequence number of the newest message.
+	uids, err := m.GetUIDs(ctx, fmt.Sprintf("%d", e.SeqNum))
 	if err != nil || len(uids) == 0 {
 		fmt.Println()
 		return
 	}
 
 	uid := uids[0]
-	overviews, err := m.GetOverviews(uid)
+	overviews, err := m.GetOverviews(ctx, uid)
 	if err == nil && len(overviews) > 0 {
 		email := overviews[uid]
 		fmt.Printf("         Subject: %s\n", email.Subject)
@@ -68,21 +78,21 @@ func describeFlagChange(flags []string) {
 	}
 }
 
-func createIdleHandler(m *imap.Dialer) *imap.IdleHandler {
+func createIdleHandler(m *imap.Client) *imap.IdleHandler {
 	return &imap.IdleHandler{
 		OnExists: func(e imap.ExistsEvent) {
 			handleNewEmail(m, e)
 		},
 
 		OnExpunge: func(e imap.ExpungeEvent) {
-			fmt.Printf("[EXPUNGE] Message removed at index: %d\n", e.MessageIndex)
+			fmt.Printf("[EXPUNGE] Message removed at sequence number: %d\n", e.SeqNum)
 			fmt.Printf("          Timestamp: %s\n", time.Now().Format("15:04:05"))
 			fmt.Println()
 		},
 
 		OnFetch: func(e imap.FetchEvent) {
 			fmt.Printf("[FETCH] Flags changed\n")
-			fmt.Printf("        Message Index: %d\n", e.MessageIndex)
+			fmt.Printf("        Sequence Number: %d\n", e.SeqNum)
 			fmt.Printf("        UID: %d\n", e.UID)
 			fmt.Printf("        New Flags: %v\n", e.Flags)
 			fmt.Printf("        Timestamp: %s\n", time.Now().Format("15:04:05"))
@@ -92,9 +102,9 @@ func createIdleHandler(m *imap.Dialer) *imap.IdleHandler {
 	}
 }
 
-func printInitialState(m *imap.Dialer) {
-	allUIDs, _ := m.GetUIDs("ALL")
-	unseenUIDs, _ := m.GetUIDs("UNSEEN")
+func printInitialState(m *imap.Client) {
+	allUIDs, _ := m.GetUIDs(ctx, "ALL")
+	unseenUIDs, _ := m.GetUIDs(ctx, "UNSEEN")
 	fmt.Printf("Initial state: %d total emails, %d unread\n", len(allUIDs), len(unseenUIDs))
 	fmt.Println()
 }
@@ -144,7 +154,7 @@ func main() {
 	printIdleInstructions()
 
 	handler := createIdleHandler(m)
-	err = m.StartIdle(handler)
+	err = m.StartIdle(ctx, handler)
 	if err != nil {
 		log.Fatalf("Failed to start IDLE: %v", err)
 	}
@@ -159,7 +169,7 @@ func main() {
 	}
 
 	// Get final state
-	allUIDs, _ := m.GetUIDs("ALL")
-	unseenUIDs, _ := m.GetUIDs("UNSEEN")
+	allUIDs, _ := m.GetUIDs(ctx, "ALL")
+	unseenUIDs, _ := m.GetUIDs(ctx, "UNSEEN")
 	fmt.Printf("\nFinal state: %d total emails, %d unread\n", len(allUIDs), len(unseenUIDs))
 }
