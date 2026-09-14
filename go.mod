@@ -6,10 +6,10 @@ require (
 	github.com/StirlingMarketingGroup/go-retry v0.0.0-20190512160921-94a8eb23e893
 	github.com/davecgh/go-spew v1.1.1
 	github.com/dustin/go-humanize v1.0.1
-	github.com/jhillyerd/enmime/v2 v2.4.1
+	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.59.0
 )
 
 require (
@@ -30,6 +30,6 @@ require (
 	github.com/olekukonko/tablewriter v1.1.4 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
