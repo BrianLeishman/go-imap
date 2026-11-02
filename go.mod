@@ -9,7 +9,7 @@ require (
 	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/rs/xid v1.6.0
 	github.com/sqs/go-xoauth2 v0.0.0-20120917012134-0911dad68e56
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 )
 
 require (
